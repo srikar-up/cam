@@ -114,7 +114,7 @@ class WebRtcManager(
         val height = buffer.height
         
         // Convert input frame buffer to I420 format
-        val i420 = buffer.toI420()
+        val i420 = buffer.toI420() ?: throw IllegalStateException("Failed to convert buffer to I420")
         val yuvBytes = ByteArray(width * height * 3 / 2)
         
         var offset = 0

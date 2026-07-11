@@ -337,7 +337,6 @@ class MainActivity : ComponentActivity() {
         signalingClient = null
         cameraService = null
         activeLanSocket = null
-        localSurfaceReference = null
         
         isConnected.value = false
         remoteVideoTrack.value = null
