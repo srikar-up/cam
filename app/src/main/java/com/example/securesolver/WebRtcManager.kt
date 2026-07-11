@@ -45,6 +45,9 @@ class WebRtcManager(
         surfaceTextureHelper = SurfaceTextureHelper.create("WebRtcCameraX", eglBaseContext)
         localVideoSource = peerConnectionFactory.createVideoSource(false)
         
+        // Notify WebRTC that video capture has started to avoid discarding frames
+        localVideoSource?.capturerObserver?.onCapturerStarted(true)
+        
         surfaceTextureHelper?.startListening { videoFrame ->
             localVideoSource?.capturerObserver?.onFrameCaptured(videoFrame)
         }
@@ -216,6 +219,7 @@ class WebRtcManager(
     }
 
     fun close() {
+        localVideoSource?.capturerObserver?.onCapturerStopped()
         peerConnection?.close()
         surfaceTextureHelper?.stopListening()
         surfaceTextureHelper?.dispose()

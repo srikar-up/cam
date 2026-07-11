@@ -8,9 +8,11 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Base64
+import android.view.Surface
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -62,6 +64,7 @@ import org.webrtc.IceCandidate
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import io.ktor.network.sockets.openReadChannel
@@ -102,23 +105,23 @@ class MainActivity : ComponentActivity() {
     private val connectionManager = ConnectionManager()
     private var activeLanSocket: io.ktor.network.sockets.Socket? = null
 
+    // NSD Auto-Discovery properties
+    private var nsdManager: android.net.nsd.NsdManager? = null
+    private var registrationListener: android.net.nsd.NsdManager.RegistrationListener? = null
+    private var discoveryListener: android.net.nsd.NsdManager.DiscoveryListener? = null
+    private val discoveredHostsList = mutableStateListOf<Pair<String, Int>>()
+
+    private var localSurfaceReference: Surface? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as CameraService.CameraBinder
             cameraService = binder.getService()
             isBound = true
             
-            webRtcManager?.let { manager ->
-                try {
-                    val localSurface = manager.initLocalVideoSource()
-                    cameraService?.bindCameraToSurface(this@MainActivity, localSurface)
-                    manager.addLocalVideoTrackToConnection()
-                    // Set local video track state to render preview viewfinder on Host screen
-                    localVideoTrackState.value = manager.getLocalVideoTrack()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    Toast.makeText(this@MainActivity, "Failed to bind camera to WebRTC", Toast.LENGTH_SHORT).show()
-                }
+            // Instantly bind the camera to the surface texture created by WebRTC
+            localSurfaceReference?.let { surface ->
+                cameraService?.bindCameraToSurface(this@MainActivity, surface)
             }
         }
 
@@ -305,6 +308,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resetConnectionState() {
+        unregisterNsdService()
+        stopNsdDiscovery()
+        discoveredHostsList.clear()
+
         if (isBound) {
             try {
                 unbindService(serviceConnection)
@@ -337,6 +344,7 @@ class MainActivity : ComponentActivity() {
         signalingClient = null
         cameraService = null
         activeLanSocket = null
+        localSurfaceReference = null
         
         isConnected.value = false
         remoteVideoTrack.value = null
@@ -371,6 +379,125 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
         return "0.0.0.0"
+    }
+
+    // --- NSD Auto-Discovery Helpers ---
+    private fun registerNsdService(port: Int) {
+        nsdManager = getSystemService(Context.NSD_SERVICE) as android.net.nsd.NsdManager
+        val serviceInfo = android.net.nsd.NsdServiceInfo().apply {
+            serviceName = "CamdroidHost_${(100..999).random()}"
+            serviceType = "_camdroid._tcp"
+            setPort(port)
+        }
+        registrationListener = object : android.net.nsd.NsdManager.RegistrationListener {
+            override fun onServiceRegistered(NsdServiceInfo: android.net.nsd.NsdServiceInfo) {}
+            override fun onRegistrationFailed(serviceInfo: android.net.nsd.NsdServiceInfo, errorCode: Int) {}
+            override fun onServiceUnregistered(serviceInfo: android.net.nsd.NsdServiceInfo) {}
+            override fun onUnregistrationFailed(serviceInfo: android.net.nsd.NsdServiceInfo, errorCode: Int) {}
+        }
+        try {
+            nsdManager?.registerService(serviceInfo, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, registrationListener)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun unregisterNsdService() {
+        try {
+            registrationListener?.let {
+                nsdManager?.unregisterService(it)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        registrationListener = null
+    }
+
+    private fun startNsdDiscovery() {
+        discoveredHostsList.clear()
+        nsdManager = getSystemService(Context.NSD_SERVICE) as android.net.nsd.NsdManager
+        discoveryListener = object : android.net.nsd.NsdManager.DiscoveryListener {
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                try { nsdManager?.stopServiceDiscovery(this) } catch (e: Exception) {}
+            }
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                try { nsdManager?.stopServiceDiscovery(this) } catch (e: Exception) {}
+            }
+            override fun onDiscoveryStarted(serviceType: String) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onServiceFound(serviceInfo: android.net.nsd.NsdServiceInfo) {
+                nsdManager?.resolveService(serviceInfo, object : android.net.nsd.NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: android.net.nsd.NsdServiceInfo, errorCode: Int) {}
+                    override fun onServiceResolved(resolvedServiceInfo: android.net.nsd.NsdServiceInfo) {
+                        val host = resolvedServiceInfo.host.hostAddress
+                        val port = resolvedServiceInfo.port
+                        if (host != null) {
+                            lifecycleScope.launch(Dispatchers.Main) {
+                                if (!discoveredHostsList.any { it.first == host }) {
+                                    discoveredHostsList.add(Pair(host, port))
+                                }
+                            }
+                        }
+                    }
+                })
+            }
+            override fun onServiceLost(serviceInfo: android.net.nsd.NsdServiceInfo) {
+                // If a host disconnects, remove it
+                lifecycleScope.launch(Dispatchers.Main) {
+                    discoveredHostsList.removeAll { it.first == serviceInfo.host?.hostAddress }
+                }
+            }
+        }
+        try {
+            nsdManager?.discoverServices("_camdroid._tcp", android.net.nsd.NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun stopNsdDiscovery() {
+        try {
+            discoveryListener?.let {
+                nsdManager?.stopServiceDiscovery(it)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        discoveryListener = null
+    }
+
+    // --- Save image to Public Android Gallery ---
+    private fun saveBitmapToGallery(context: Context, bitmap: Bitmap) {
+        val filename = "Camdroid_${System.currentTimeMillis()}.jpg"
+        var fos: java.io.OutputStream? = null
+        val contentResolver = context.contentResolver
+        val imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/Camdroid")
+            }
+            contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        } else {
+            val imagesDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES).toString()
+            val file = File(imagesDir, filename)
+            android.net.Uri.fromFile(file)
+        }
+
+        try {
+            imageUri?.let { uri ->
+                fos = contentResolver.openOutputStream(uri)
+                fos?.let {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it)
+                }
+                Toast.makeText(context, "Saved to Gallery!", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(context, "Failed to save: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        } finally {
+            fos?.close()
+        }
     }
 
     @Composable
@@ -813,6 +940,12 @@ class MainActivity : ComponentActivity() {
                         }
                     )
 
+                    // CRITICAL: Initialize local video tracks BEFORE generating the SDP Offer
+                    val localSurface = webRtcManager!!.initLocalVideoSource()
+                    localSurfaceReference = localSurface
+                    localVideoTrackState.value = webRtcManager!!.getLocalVideoTrack()
+
+                    // Start camera foreground service safely
                     val intent = Intent(this@MainActivity, CameraService::class.java)
                     startService(intent)
                     bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -854,6 +987,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Register local service to Wi-Fi for auto-discovery
+                    registerNsdService(8890)
+
                 } catch (e: Exception) {
                     e.printStackTrace()
                     serverLogs = "Local Server failed: ${e.message}"
@@ -891,6 +1027,11 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     )
+
+                    // CRITICAL: Initialize local video tracks BEFORE generating the SDP Offer
+                    val localSurface = webRtcManager!!.initLocalVideoSource()
+                    localSurfaceReference = localSurface
+                    localVideoTrackState.value = webRtcManager!!.getLocalVideoTrack()
 
                     val intent = Intent(this@MainActivity, CameraService::class.java)
                     startService(intent)
@@ -1056,6 +1197,17 @@ class MainActivity : ComponentActivity() {
         var portInput by remember { mutableStateOf("8890") }
         var roomIdInput by remember { mutableStateOf(localRoomId.value) }
         val themeColors = getThemeColors()
+        val context = LocalContext.current
+
+        // Run Local Wi-Fi discovery when entering ClientScreen in LAN connection mode
+        DisposableEffect(Unit) {
+            if (activeConnectionModeState.value == "LAN") {
+                startNsdDiscovery()
+            }
+            onDispose {
+                stopNsdDiscovery()
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -1099,6 +1251,75 @@ class MainActivity : ComponentActivity() {
                         )
 
                         if (activeConnectionModeState.value == "LAN") {
+                            // Render list of discovered LAN hosts
+                            Text(
+                                text = "DISCOVERED LAN HOSTS (AUTO-CONNECT)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF64748B),
+                                modifier = Modifier.align(Alignment.Start).padding(bottom = 8.dp)
+                            )
+                            
+                            if (discoveredHostsList.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(64.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFFF8FAFC))
+                                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                                        .padding(12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = themeColors.second)
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text("Scanning local Wi-Fi for active hosts...", fontSize = 12.sp, color = Color(0xFF64748B))
+                                    }
+                                }
+                            } else {
+                                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                                    discoveredHostsList.forEach { hostPair ->
+                                        Card(
+                                            onClick = {
+                                                try {
+                                                    connectAsClientLan("${hostPair.first}:${hostPair.second}")
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Error connecting: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp)
+                                                .shadow(2.dp, RoundedCornerShape(12.dp)),
+                                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text("Active Camdroid Host", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = themeColors.second)
+                                                    Text("IP: ${hostPair.first}:${hostPair.second}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                                }
+                                                Text("TAP TO CONNECT", fontSize = 10.sp, fontWeight = FontWeight.Black, color = themeColors.third)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "OR FILL DETAILS MANUALLY",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF94A3B8),
+                                modifier = Modifier.align(Alignment.Start).padding(bottom = 8.dp)
+                            )
+
                             OutlinedTextField(
                                 value = ipInput,
                                 onValueChange = { ipInput = it },
@@ -1321,13 +1542,29 @@ class MainActivity : ComponentActivity() {
                         
                         Spacer(modifier = Modifier.height(20.dp))
                         
-                        Button(
-                            onClick = { capturedPhotoState.value = null },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = themeColors.second),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("CLOSE PREVIEW", fontWeight = FontWeight.Bold, color = Color.White)
+                        // Button row to save to gallery or dismiss
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Button(
+                                onClick = { 
+                                    capturedPhotoState.value?.let { bitmap ->
+                                        saveBitmapToGallery(this@MainActivity, bitmap)
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp).padding(end = 4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = themeColors.second),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("SAVE TO GALLERY", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
+                            }
+                            
+                            Button(
+                                onClick = { capturedPhotoState.value = null },
+                                modifier = Modifier.weight(1f).height(48.dp).padding(start = 4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("CLOSE", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF334155))
+                            }
                         }
                     }
                 }
@@ -1565,12 +1802,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
-        }
-        webRtcManager?.close()
-        connectionManager.close()
+        resetConnectionState()
         eglBase.release()
     }
 }
