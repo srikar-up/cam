@@ -902,6 +902,16 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("SAVE CONFIGURATION", fontWeight = FontWeight.Bold, color = Color.White)
                     }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = "Version: v1.0.8",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }
