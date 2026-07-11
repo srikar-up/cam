@@ -64,6 +64,8 @@ import org.webrtc.VideoTrack
 import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.utils.io.readUTF8Line
 
 class MainActivity : ComponentActivity() {
 
@@ -354,6 +356,23 @@ class MainActivity : ComponentActivity() {
         return firebaseAppId.value.ifEmpty { BuildConfig.FIREBASE_APP_ID }
     }
 
+    private fun getLocalIpAddress(): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            for (intf in interfaces) {
+                val addrs = intf.inetAddresses
+                for (addr in addrs) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        return addr.hostAddress ?: "0.0.0.0"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return "0.0.0.0"
+    }
+
     @Composable
     fun RoleSelectionScreen(onRoleSelected: (String) -> Unit, onOpenSettings: () -> Unit) {
         val context = LocalContext.current
@@ -532,6 +551,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (String) -> Unit) {
         val themeColors = getThemeColors()
+        val context = LocalContext.current
         var advancedExpanded by remember { mutableStateOf(false) }
         var maskCredentials by remember { mutableStateOf(true) }
 
