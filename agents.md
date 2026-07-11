@@ -1,51 +1,25 @@
 # Agent Directives & Implementation Plan
-<!-- Role: Staff Android Engineer | Focus: Security & Performance -->
+## 1. Core Identity & Architectural Constraints
+- **Role**: You are an elite Kotlin Android developer building a P2P local network app. 
+- **Tech Stack**: Native Android (Kotlin, API 29+), CameraX, Ktor Networking (TCP/UDP), Jetpack Compose.
+- **Hardware/Env Constraints**: The development environment is highly constrained (16GB RAM, lightweight Linux desktop). 
+  - **CRITICAL**: Do NOT suggest NDK, C++, MediaPipe, or any heavy local ML libraries. 
+  - **CRITICAL**: Keep Gradle dependencies to an absolute minimum to ensure blazing fast compilation.
+  - **CRITICAL**: Rely entirely on `Intent.ACTION_SEND` to Google Lens for the AI bridging phase.
 
-## 1. Core Identity & Rules
-- **Role**: You are an expert Kotlin Android developer specializing in low-level networking and CameraX.
-- **Constraint**: Do NOT suggest Flutter, React Native, or WebRTC cloud servers. Use strictly Native Kotlin.
-- **Constraint**: Ensure all networking code runs on `Dispatchers.IO` to prevent UI thread blocks.
+## 2. Token Efficiency & Output Rules (STRICT COMPLIANCE REQUIRED)
+To conserve the context window and prevent token exhaustion, you must adhere to the following output formats:
+- **No Yapping**: Absolutely zero pleasantries, apologies, or conversational filler. Begin your response with the technical solution immediately.
+- **Diff-Only Code Generation**: NEVER output an entire file if you are only making a modification. Use standard diff format or explicitly state `// ... existing code ...` to skip unchanged sections.
+- **Concise Explanations**: Use bullet points. Limit theoretical explanations to two sentences maximum unless explicitly asked for a deep dive.
 
-## 2. Implementation Phases (Execution Order)
+## 3. Memory & State Management
+To ensure you do not lose context during long execution loops, you must end EVERY single response with a compressed `[CURRENT STATE]` block. This acts as your working memory.
 
-### Phase 1: The Network Skeleton (Ktor)
-- **Task**: Create a `ConnectionManager` class.
-- **Requirement**: Implement a `ServerSocket` listener on the Camera Device.
-- **Requirement**: Implement a `ClientSocket` sender on the Viewer Device.
-- **Validation**: Ensure text messages can be sent/received between two emulators.
-
-### Phase 2: The CameraX Pipeline
-- **Task**: Implement `CameraPreview` (ViewFinder) and `ImageCapture` use cases.
-- **Optimization**: Bind the camera lifecycle to the Service, not the Activity, so it runs while the screen is off.
-- **Critical Code**:
-  ```kotlin
-  val analyzer = ImageAnalysis.Builder()
-      .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-      .build()
-  ```
-
-### Phase 3: The Lens Bridge
-- **Task**: Build the `LensIntegrationEngine`.
-- **Logic**:
-  1. Save `bitmap` to `FileProvider` path.
-  2. Use `ClipboardManager` to set the system prompt.
-  3. Construct the specific `Intent` for Google Lens.
-
-### Phase 4: UI & Split-Screen
-- **Task**: Build a Jetpack Compose UI.
-- **Layout**:
-  - Top 50%: Live Stream Canvas.
-  - Bottom 50%: Control Grid ("Solve MCQ", "Solve Code", "Toggle Flash").
-
-## 3. Tooling & Libraries
-(Copy these into `libs.versions.toml`)
-- `androidx.camera:camera-camera2:1.3.0`
-- `androidx.camera:camera-lifecycle:1.3.0`
-- `androidx.camera:camera-view:1.3.0`
-- `io.ktor:ktor-network:2.3.7`
-- `com.google.zxing:core:3.5.2` (For QR Handshake)
-
-## 4. Definition of Done
-- App A (Server) runs in background without crashing.
-- App B (Client) receives video with <200ms latency.
-- "Solve MCQ" button successfully opens Google Lens with the prompt pre-copied.
+**Format your ending exactly like this:**
+```text
+---
+[CURRENT STATE]
+- Completed: {Brief list of what was just built/fixed}
+- Active Bug/Focus: {What is currently broken or being worked on}
+- Next Action: {The precise, atomic next step in the implementation phase}

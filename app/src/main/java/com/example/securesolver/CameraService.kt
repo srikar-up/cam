@@ -6,16 +6,23 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.view.Surface
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -23,12 +30,18 @@ class CameraService : LifecycleService() {
 
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
+    private var camera: Camera? = null
+    private var isFlashEnabled = false
+    private val binder = CameraBinder()
+
+    inner class CameraBinder : Binder() {
+        fun getService(): CameraService = this@CameraService
+    }
 
     override fun onCreate() {
         super.onCreate()
         cameraExecutor = Executors.newSingleThreadExecutor()
         startForegroundService()
-        startCamera()
     }
 
     private fun startForegroundService() {
@@ -45,7 +58,7 @@ class CameraService : LifecycleService() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Camera Active")
-            .setContentText("Camera stream is running in the background")
+            .setContentText("P2P Real-Time Camera Stream Running")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
@@ -64,41 +77,66 @@ class CameraService : LifecycleService() {
         }
     }
 
-    private fun startCamera() {
+    fun bindCameraToSurface(targetSurface: Surface) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
             val preview = Preview.Builder().build()
             
+            // Bridge the CameraX frame output to the WebRTC video capturer Surface
+            preview.setSurfaceProvider { request ->
+                request.provideSurface(targetSurface, ContextCompat.getMainExecutor(this)) {}
+            }
+
             imageCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build()
-
-            val analyzer = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-
-            analyzer.setAnalyzer(cameraExecutor) { imageProxy ->
-                // Image proxy handling logic
-                imageProxy.close()
-            }
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                camera = cameraProvider.bindToLifecycle(
                     this,
                     cameraSelector,
                     preview,
-                    imageCapture,
-                    analyzer
+                    imageCapture
                 )
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    fun captureHighQualityImage(onImageCaptured: (ByteArray) -> Unit) {
+        val capture = imageCapture ?: return
+        val tempFile = File(cacheDir, "camera_capture.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
+
+        capture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    cameraExecutor.execute {
+                        val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath)
+                        val stream = ByteArrayOutputStream()
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                        onImageCaptured(stream.toByteArray())
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    exception.printStackTrace()
+                }
+            }
+        )
+    }
+
+    fun toggleFlash() {
+        isFlashEnabled = !isFlashEnabled
+        camera?.cameraControl?.enableTorch(isFlashEnabled)
     }
 
     override fun onDestroy() {
@@ -108,6 +146,6 @@ class CameraService : LifecycleService() {
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
-        return null
+        return binder
     }
 }

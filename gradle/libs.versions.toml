@@ -31,6 +31,12 @@ ktor-network = { group = "io.ktor", name = "ktor-network", version.ref = "ktor" 
 # ZXing
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
+# WebRTC & Firebase
+webrtc = { group = "org.webrtc", name = "google-webrtc", version = "1.0.32006" }
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version = "32.7.0" }
+firebase-database = { group = "com.google.firebase", name = "firebase-database-ktx" }
+
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

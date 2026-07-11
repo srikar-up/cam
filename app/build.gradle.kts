@@ -70,4 +70,10 @@ dependencies {
 
     // ZXing
     implementation(libs.zxing.core)
+
+    // WebRTC & Firebase
+    implementation(libs.webrtc)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.database)
 }
+
