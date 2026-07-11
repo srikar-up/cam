@@ -3,6 +3,7 @@ package com.example.securesolver
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -20,19 +21,27 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class CameraService : LifecycleService() {
+class CameraService : Service(), LifecycleOwner {
 
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
     private var isFlashEnabled = false
     private val binder = CameraBinder()
+    
+    // Explicit LifecycleRegistry to manage state tracking on Android 16+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+
+    override val lifecycle: Lifecycle
+        get() = lifecycleRegistry
 
     inner class CameraBinder : Binder() {
         fun getService(): CameraService = this@CameraService
@@ -42,6 +51,9 @@ class CameraService : LifecycleService() {
         super.onCreate()
         cameraExecutor = Executors.newSingleThreadExecutor()
         startForegroundService()
+        
+        // Force the LifecycleState to RESUMED to trick CameraX into starting camera capture
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
     private fun startForegroundService() {
@@ -141,11 +153,11 @@ class CameraService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         cameraExecutor.shutdown()
     }
 
-    override fun onBind(intent: Intent): IBinder? {
-        super.onBind(intent)
+    override fun onBind(intent: Intent): IBinder {
         return binder
     }
 }

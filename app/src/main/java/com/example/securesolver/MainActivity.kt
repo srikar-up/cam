@@ -17,12 +17,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -36,13 +38,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.securesolver.ui.theme.SecureSolverTheme
@@ -57,8 +64,6 @@ import org.webrtc.VideoTrack
 import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import io.ktor.network.sockets.openReadChannel
-import io.ktor.utils.io.readUTF8Line
 
 class MainActivity : ComponentActivity() {
 
@@ -70,7 +75,7 @@ class MainActivity : ComponentActivity() {
     private var cameraService: CameraService? = null
     private var isBound = false
 
-    // State parameters for UI credentials
+    // State parameters for UI credentials (empty by default to hide personal credentials from settings UI)
     private var firebaseDbUrl = mutableStateOf("")
     private var firebaseApiKey = mutableStateOf("")
     private var firebaseAppId = mutableStateOf("")
@@ -82,6 +87,9 @@ class MainActivity : ComponentActivity() {
     private var receivedImageBytes = ByteArrayOutputStream()
     private var isProcessing = mutableStateOf(false)
     private var activeSolverPromptType = mutableStateOf("")
+    
+    // Captured photo preview state
+    private var capturedPhotoState = mutableStateOf<Bitmap?>(null)
     
     // UI Theme & Mode States
     private var activeThemeState = mutableStateOf("SLATE")
@@ -145,11 +153,11 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(missingPermissions.toTypedArray())
         }
 
-        // Load credentials and settings
+        // Load credentials and settings (slots remain empty by default to protect developer credentials)
         val prefs = getSharedPreferences("secure_solver_prefs", Context.MODE_PRIVATE)
-        firebaseDbUrl.value = prefs.getString("db_url", BuildConfig.FIREBASE_DB_URL) ?: BuildConfig.FIREBASE_DB_URL
-        firebaseApiKey.value = prefs.getString("api_key", BuildConfig.FIREBASE_API_KEY) ?: BuildConfig.FIREBASE_API_KEY
-        firebaseAppId.value = prefs.getString("app_id", BuildConfig.FIREBASE_APP_ID) ?: BuildConfig.FIREBASE_APP_ID
+        firebaseDbUrl.value = prefs.getString("db_url", "") ?: ""
+        firebaseApiKey.value = prefs.getString("api_key", "") ?: ""
+        firebaseAppId.value = prefs.getString("app_id", "") ?: ""
         activeThemeState.value = prefs.getString("active_theme", "SLATE") ?: "SLATE"
         activeConnectionModeState.value = prefs.getString("connection_mode", "OPEN_AIR") ?: "OPEN_AIR"
 
@@ -334,6 +342,18 @@ class MainActivity : ComponentActivity() {
         localRoomId.value = ""
     }
 
+    private fun getActiveFirebaseDbUrl(): String {
+        return firebaseDbUrl.value.ifEmpty { BuildConfig.FIREBASE_DB_URL }
+    }
+
+    private fun getActiveFirebaseApiKey(): String {
+        return firebaseApiKey.value.ifEmpty { BuildConfig.FIREBASE_API_KEY }
+    }
+
+    private fun getActiveFirebaseAppId(): String {
+        return firebaseAppId.value.ifEmpty { BuildConfig.FIREBASE_APP_ID }
+    }
+
     @Composable
     fun RoleSelectionScreen(onRoleSelected: (String) -> Unit, onOpenSettings: () -> Unit) {
         val context = LocalContext.current
@@ -438,10 +458,6 @@ class MainActivity : ComponentActivity() {
                 onClick = {
                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                         Toast.makeText(context, "Camera permission required to start Host", Toast.LENGTH_LONG).show()
-                    } else if (activeConnectionModeState.value == "OPEN_AIR" &&
-                        (firebaseDbUrl.value.contains("fake-db") || firebaseApiKey.value.contains("FakeKey"))) {
-                        Toast.makeText(context, "Please configure valid Firebase credentials in Settings first", Toast.LENGTH_LONG).show()
-                        onOpenSettings()
                     } else {
                         onRoleSelected("SERVER")
                     }
@@ -479,13 +495,7 @@ class MainActivity : ComponentActivity() {
             // Client Card
             Card(
                 onClick = {
-                    if (activeConnectionModeState.value == "OPEN_AIR" &&
-                        (firebaseDbUrl.value.contains("fake-db") || firebaseApiKey.value.contains("FakeKey"))) {
-                        Toast.makeText(context, "Please configure valid Firebase credentials in Settings first", Toast.LENGTH_LONG).show()
-                        onOpenSettings()
-                    } else {
-                        onRoleSelected("CLIENT")
-                    }
+                    onRoleSelected("CLIENT")
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -521,8 +531,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (String) -> Unit) {
-        val context = LocalContext.current
         val themeColors = getThemeColors()
+        var advancedExpanded by remember { mutableStateOf(false) }
+        var maskCredentials by remember { mutableStateOf(true) }
 
         Column(
             modifier = Modifier
@@ -618,52 +629,113 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    Text(
-                        text = "FIREBASE CONFIGURATION (OpenAir)",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF64748B),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                    // Collapsible Advanced Configuration Section (Private Hosting)
+                    Card(
+                        onClick = { advancedExpanded = !advancedExpanded },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Advanced Setup (Private Hosting)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF334155)
+                                )
+                                Text(
+                                    text = if (advancedExpanded) "Collapse" else "Expand",
+                                    fontSize = 11.sp,
+                                    color = themeColors.second,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            if (advancedExpanded) {
+                                Text(
+                                    text = "Slots are empty by default (using developer pre-baked settings). Enter your custom credentials here to route P2P calls to your own private server configuration.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B),
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                                    lineHeight = 16.sp
+                                )
 
-                    OutlinedTextField(
-                        value = firebaseDbUrl.value,
-                        onValueChange = { firebaseDbUrl.value = it },
-                        label = { Text("Database URL", color = Color(0xFF64748B)) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFF0F172A),
-                            unfocusedTextColor = Color(0xFF334155),
-                            focusedBorderColor = themeColors.third,
-                            unfocusedBorderColor = Color(0xFFCBD5E1)
-                        ),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                    )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Mask Credentials on Screen",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF475569)
+                                    )
+                                    Switch(
+                                        checked = maskCredentials,
+                                        onCheckedChange = { maskCredentials = it },
+                                        colors = SwitchDefaults.colors(checkedThumbColor = themeColors.second)
+                                    )
+                                }
 
-                    OutlinedTextField(
-                        value = firebaseApiKey.value,
-                        onValueChange = { firebaseApiKey.value = it },
-                        label = { Text("API Key", color = Color(0xFF64748B)) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFF0F172A),
-                            unfocusedTextColor = Color(0xFF334155),
-                            focusedBorderColor = themeColors.third,
-                            unfocusedBorderColor = Color(0xFFCBD5E1)
-                        ),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                    )
+                                OutlinedTextField(
+                                    value = firebaseDbUrl.value,
+                                    onValueChange = { firebaseDbUrl.value = it },
+                                    label = { Text("Private Database URL", color = Color(0xFF64748B)) },
+                                    placeholder = { Text("Using default global URL") },
+                                    visualTransformation = if (maskCredentials) PasswordVisualTransformation() else VisualTransformation.None,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color(0xFF0F172A),
+                                        unfocusedTextColor = Color(0xFF334155),
+                                        focusedBorderColor = themeColors.third,
+                                        unfocusedBorderColor = Color(0xFFCBD5E1)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                                )
 
-                    OutlinedTextField(
-                        value = firebaseAppId.value,
-                        onValueChange = { firebaseAppId.value = it },
-                        label = { Text("Application ID", color = Color(0xFF64748B)) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFF0F172A),
-                            unfocusedTextColor = Color(0xFF334155),
-                            focusedBorderColor = themeColors.third,
-                            unfocusedBorderColor = Color(0xFFCBD5E1)
-                        ),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
-                    )
+                                OutlinedTextField(
+                                    value = firebaseApiKey.value,
+                                    onValueChange = { firebaseApiKey.value = it },
+                                    label = { Text("Private API Key", color = Color(0xFF64748B)) },
+                                    placeholder = { Text("Using default global API key") },
+                                    visualTransformation = if (maskCredentials) PasswordVisualTransformation() else VisualTransformation.None,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color(0xFF0F172A),
+                                        unfocusedTextColor = Color(0xFF334155),
+                                        focusedBorderColor = themeColors.third,
+                                        unfocusedBorderColor = Color(0xFFCBD5E1)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                                )
+
+                                OutlinedTextField(
+                                    value = firebaseAppId.value,
+                                    onValueChange = { firebaseAppId.value = it },
+                                    label = { Text("Private Application ID", color = Color(0xFF64748B)) },
+                                    placeholder = { Text("Using default global App ID") },
+                                    visualTransformation = if (maskCredentials) PasswordVisualTransformation() else VisualTransformation.None,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color(0xFF0F172A),
+                                        unfocusedTextColor = Color(0xFF334155),
+                                        focusedBorderColor = themeColors.third,
+                                        unfocusedBorderColor = Color(0xFFCBD5E1)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                                )
+                            }
+                        }
+                    }
 
                     Button(
                         onClick = {
@@ -686,25 +758,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    private fun getLocalIpAddress(): String {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val networkInterface = interfaces.nextElement()
-                val addresses = networkInterface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val address = addresses.nextElement()
-                    if (!address.isLoopbackAddress && address is Inet4Address) {
-                        return address.hostAddress ?: "127.0.0.1"
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return "127.0.0.1"
     }
 
     @Composable
@@ -794,9 +847,9 @@ class MainActivity : ComponentActivity() {
                 try {
                     signalingClient = FirebaseSignalingClient(
                         this@MainActivity,
-                        firebaseDbUrl.value,
-                        firebaseApiKey.value,
-                        firebaseAppId.value
+                        getActiveFirebaseDbUrl(),
+                        getActiveFirebaseApiKey(),
+                        getActiveFirebaseAppId()
                     )
 
                     webRtcManager = WebRtcManager(
@@ -885,7 +938,7 @@ class MainActivity : ComponentActivity() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
-                // Viewfinder camera preview box on Server screen (viewing current hosting stream)
+                // Viewfinder camera preview box on Server screen
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1101,16 +1154,16 @@ class MainActivity : ComponentActivity() {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f)
+                                .weight(1.1f)
                                 .background(Color.White)
-                                .padding(24.dp),
+                                .padding(16.dp),
                             verticalArrangement = Arrangement.SpaceEvenly,
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
                                 text = "STREAM RECEIVER CONTROLS",
                                 color = Color(0xFF0F172A),
-                                fontSize = 14.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 1.sp
                             )
@@ -1124,12 +1177,12 @@ class MainActivity : ComponentActivity() {
                                     enabled = !isProcessing.value,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(80.dp)
-                                        .padding(8.dp),
-                                    shape = RoundedCornerShape(14.dp),
+                                        .height(72.dp)
+                                        .padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
                                 ) {
-                                    Text("Solve MCQ", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
+                                    Text("Solve MCQ", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
                                 }
 
                                 Button(
@@ -1137,26 +1190,92 @@ class MainActivity : ComponentActivity() {
                                     enabled = !isProcessing.value,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(80.dp)
-                                        .padding(8.dp),
-                                    shape = RoundedCornerShape(14.dp),
+                                        .height(72.dp)
+                                        .padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
                                 ) {
-                                    Text("Solve Code", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color(0xFF0F172A))
+                                    Text("Solve Code", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color(0xFF0F172A))
                                 }
                             }
 
-                            Button(
-                                onClick = { webRtcManager?.sendDataMessage("TOGGLE_FLASH") },
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                Button(
+                                    onClick = { triggerSolverCapture("PREVIEW") },
+                                    enabled = !isProcessing.value,
+                                    modifier = Modifier
+                                        .weight(1.2f)
+                                        .height(64.dp)
+                                        .padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
+                                ) {
+                                    Text("Capture High-Res Photo", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+
+                                Button(
+                                    onClick = { webRtcManager?.sendDataMessage("TOGGLE_FLASH") },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(64.dp)
+                                        .padding(4.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
+                                ) {
+                                    Text("Toggle Flash", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Captured High-Res Photo Preview Dialog
+        if (capturedPhotoState.value != null) {
+            Dialog(onDismissRequest = { capturedPhotoState.value = null }) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(8.dp, RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
+                        .padding(20.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Captured High-Res Image",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color(0xFF0F172A),
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        
+                        capturedPhotoState.value?.let { bitmap ->
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Host Capture",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(60.dp)
-                                    .padding(8.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
-                            ) {
-                                Text("Toggle Camera Flash", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
-                            }
+                                    .height(300.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(20.dp))
+                        
+                        Button(
+                            onClick = { capturedPhotoState.value = null },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColors.second),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("CLOSE PREVIEW", fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
                 }
@@ -1167,9 +1286,9 @@ class MainActivity : ComponentActivity() {
     private fun connectAsClient(roomId: String) {
         signalingClient = FirebaseSignalingClient(
             this,
-            firebaseDbUrl.value,
-            firebaseApiKey.value,
-            firebaseAppId.value
+            getActiveFirebaseDbUrl(),
+            getActiveFirebaseApiKey(),
+            getActiveFirebaseAppId()
         )
 
         webRtcManager = WebRtcManager(
@@ -1333,7 +1452,9 @@ class MainActivity : ComponentActivity() {
                 if (bitmap != null) {
                     lifecycleScope.launch(Dispatchers.Main) {
                         isProcessing.value = false
-                        if (activeSolverPromptType.value == "MCQ") {
+                        if (activeSolverPromptType.value == "PREVIEW") {
+                            capturedPhotoState.value = bitmap
+                        } else if (activeSolverPromptType.value == "MCQ") {
                             lensIntegrationEngine.solveMCQ(bitmap)
                         } else {
                             lensIntegrationEngine.solveCode(bitmap)
