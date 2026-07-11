@@ -1255,7 +1255,7 @@ class MainActivity : ComponentActivity() {
 
                 val receiveChannel = socket.openReadChannel()
                 while (true) {
-                    val line = io.ktor.utils.io.readUTF8Line(receiveChannel) ?: break
+                    val line = receiveChannel.readUTF8Line() ?: break
                     handleLanSignalingMessage(line)
                 }
 
