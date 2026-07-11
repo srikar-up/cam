@@ -231,23 +231,6 @@ class MainActivity : ComponentActivity() {
                     )
                 )
         ) {
-            // Floating Settings Icon (Clean Gear button)
-            IconButton(
-                onClick = { showSettingsDialog = true },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(24.dp)
-                    .size(48.dp)
-                    .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
-                    .border(1.dp, Color.White, RoundedCornerShape(24.dp))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Configuration Setup",
-                    tint = Color(0xFF1E293B)
-                )
-            }
-
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -320,6 +303,23 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Text("RECEIVER CLIENT MODE", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
                 }
+            }
+
+            // Floating Settings Icon (Clean Gear button)
+            IconButton(
+                onClick = { showSettingsDialog = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(24.dp)
+                    .size(48.dp)
+                    .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
+                    .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(24.dp))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Configuration Setup",
+                    tint = Color(0xFF1E293B)
+                )
             }
         }
 
