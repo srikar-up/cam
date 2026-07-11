@@ -25,8 +25,9 @@ androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", 
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camera" }
 androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camera" }
 
-# Ktor Network
+# Ktor Network & IO
 ktor-network = { group = "io.ktor", name = "ktor-network", version.ref = "ktor" }
+ktor-io = { group = "io.ktor", name = "ktor-io", version.ref = "ktor" }
 
 # ZXing
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }

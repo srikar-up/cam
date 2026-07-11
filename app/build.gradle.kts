@@ -93,6 +93,7 @@ dependencies {
 
     // Ktor
     implementation(libs.ktor.network)
+    implementation(libs.ktor.io)
 
     // ZXing
     implementation(libs.zxing.core)
