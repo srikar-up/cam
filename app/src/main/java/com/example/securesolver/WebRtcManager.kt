@@ -10,7 +10,8 @@ class WebRtcManager(
     private val eglBaseContext: EglBase.Context,
     private val onIceCandidateGenerated: (IceCandidate) -> Unit,
     private val onRemoteStreamReceived: (VideoTrack) -> Unit,
-    private val onDataChannelMessage: (String) -> Unit
+    private val onDataChannelMessage: (String) -> Unit,
+    private val onConnectionStateChanged: (Boolean) -> Unit
 ) {
     private var peerConnectionFactory: PeerConnectionFactory
     private var peerConnection: PeerConnection? = null
@@ -63,7 +64,14 @@ class WebRtcManager(
 
         val observer = object : PeerConnection.Observer {
             override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                if (state == PeerConnection.IceConnectionState.CONNECTED) {
+                    onConnectionStateChanged(true)
+                } else if (state == PeerConnection.IceConnectionState.DISCONNECTED ||
+                           state == PeerConnection.IceConnectionState.FAILED) {
+                    onConnectionStateChanged(false)
+                }
+            }
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
             
