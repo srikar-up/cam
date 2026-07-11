@@ -15,9 +15,20 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,8 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -55,17 +66,15 @@ class MainActivity : ComponentActivity() {
     private var cameraService: CameraService? = null
     private var isBound = false
 
-    // Firebase Credentials (configurable via UI)
-    private var firebaseDbUrl = mutableStateOf(BuildConfig.FIREBASE_DB_URL)
-    private var firebaseApiKey = mutableStateOf(BuildConfig.FIREBASE_API_KEY)
-    private var firebaseAppId = mutableStateOf(BuildConfig.FIREBASE_APP_ID)
+    // State parameters for UI credentials
+    private var firebaseDbUrl = mutableStateOf("")
+    private var firebaseApiKey = mutableStateOf("")
+    private var firebaseAppId = mutableStateOf("")
 
-    // Peer connection state tracking
     private var localRoomId = mutableStateOf("")
     private var isConnected = mutableStateOf(false)
     private var remoteVideoTrack = mutableStateOf<VideoTrack?>(null)
     private var receivedImageBytes = ByteArrayOutputStream()
-    private var expectedImageSize = 0
     private var isProcessing = mutableStateOf(false)
     private var activeSolverPromptType = mutableStateOf("")
 
@@ -75,10 +84,14 @@ class MainActivity : ComponentActivity() {
             cameraService = binder.getService()
             isBound = true
             
-            // If server mode is already active, bind camera to WebRTC local source surface
             webRtcManager?.let { manager ->
-                val localSurface = manager.initLocalVideoSource()
-                cameraService?.bindCameraToSurface(localSurface)
+                try {
+                    val localSurface = manager.initLocalVideoSource()
+                    cameraService?.bindCameraToSurface(localSurface)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    Toast.makeText(this@MainActivity, "Failed to bind camera to WebRTC", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -93,7 +106,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
         if (!cameraGranted) {
-            Toast.makeText(this, "Camera permission is required", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Camera permission is required to stream video", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -102,11 +115,26 @@ class MainActivity : ComponentActivity() {
         eglBase = EglBase.create()
         lensIntegrationEngine = LensIntegrationEngine(this)
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+        // Request permissions on startup
+        val requiredPermissions = mutableListOf(Manifest.permission.CAMERA)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        
+        val missingPermissions = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPermissions.isNotEmpty()) {
+            requestPermissionLauncher.launch(missingPermissions.toTypedArray())
         }
 
-        // Handle incoming deep link
+        // Load credentials from SharedPreferences
+        val prefs = getSharedPreferences("secure_solver_prefs", Context.MODE_PRIVATE)
+        firebaseDbUrl.value = prefs.getString("db_url", BuildConfig.FIREBASE_DB_URL) ?: BuildConfig.FIREBASE_DB_URL
+        firebaseApiKey.value = prefs.getString("api_key", BuildConfig.FIREBASE_API_KEY) ?: BuildConfig.FIREBASE_API_KEY
+        firebaseAppId.value = prefs.getString("app_id", BuildConfig.FIREBASE_APP_ID) ?: BuildConfig.FIREBASE_APP_ID
+
+        // Parse deep link room ID
         intent?.data?.let { uri ->
             val room = uri.getQueryParameter("room")
             if (!room.isNullOrEmpty()) {
@@ -118,7 +146,7 @@ class MainActivity : ComponentActivity() {
             SecureSolverTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = Color(0xFFF3F7FA) // Soft light canvas
                 ) {
                     MainScreen()
                 }
@@ -130,7 +158,6 @@ class MainActivity : ComponentActivity() {
     fun MainScreen() {
         var currentRole by remember { mutableStateOf<String?>(null) }
 
-        // Auto-route to CLIENT role if deep link populated room ID
         LaunchedEffect(localRoomId.value) {
             if (localRoomId.value.isNotEmpty() && currentRole == null) {
                 currentRole = "CLIENT"
@@ -150,83 +177,189 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun RoleSelectionScreen(onRoleSelected: (String) -> Unit) {
+        val context = LocalContext.current
+        var configExpanded by remember { mutableStateOf(false) }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364))
+                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFF0F4F8), Color(0xFFE2EAF4))
                     )
                 )
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Spacer(modifier = Modifier.height(64.dp))
+
+            // Premium Minimalist Title
             Text(
-                text = "SECURE SOLVER P2P",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                letterSpacing = 1.sp,
-                modifier = Modifier.padding(bottom = 24.dp)
+                text = "SECURE SOLVER",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black,
+                color = Color(0xFF0F172A),
+                fontFamily = FontFamily.SansSerif,
+                letterSpacing = 2.sp,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+            Text(
+                text = "Modern Light P2P Streaming",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(bottom = 64.dp)
             )
 
-            // Firebase Config Fields
-            OutlinedTextField(
-                value = firebaseDbUrl.value,
-                onValueChange = { firebaseDbUrl.value = it },
-                label = { Text("Firebase DB URL", color = Color.LightGray) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            )
-
-            OutlinedTextField(
-                value = firebaseApiKey.value,
-                onValueChange = { firebaseApiKey.value = it },
-                label = { Text("API Key", color = Color.LightGray) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            )
-
-            OutlinedTextField(
-                value = firebaseAppId.value,
-                onValueChange = { firebaseAppId.value = it },
-                label = { Text("Application ID", color = Color.LightGray) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
-            )
-
+            // Action Selection Buttons (Modern Minimalist Solid Slate & Bordered layouts)
             Button(
-                onClick = { onRoleSelected("SERVER") },
+                onClick = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        Toast.makeText(context, "Camera permission required to start Host", Toast.LENGTH_LONG).show()
+                    } else if (firebaseDbUrl.value.contains("fake-db") || firebaseApiKey.value.contains("FakeKey")) {
+                        Toast.makeText(context, "Please configure valid Firebase credentials first", Toast.LENGTH_LONG).show()
+                        configExpanded = true
+                    } else {
+                        onRoleSelected("SERVER")
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E2DE2))
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp)),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Text("HOST CAMERA", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("HOST CAMERA MODE", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color.White)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Button(
-                onClick = { onRoleSelected("CLIENT") },
+                onClick = {
+                    if (firebaseDbUrl.value.contains("fake-db") || firebaseApiKey.value.contains("FakeKey")) {
+                        Toast.makeText(context, "Please configure valid Firebase credentials first", Toast.LENGTH_LONG).show()
+                        configExpanded = true
+                    } else {
+                        onRoleSelected("CLIENT")
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0))
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.5.dp, Color(0xFF0F172A), RoundedCornerShape(16.dp)),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Text("JOIN STREAMER", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("RECEIVER CLIENT MODE", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
+            }
+
+            Spacer(modifier = Modifier.height(64.dp))
+
+            // Light Glassmorphic Config Panel (Collapsible/Hidden by default)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.White.copy(alpha = 0.65f))
+                    .border(1.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
+                    .padding(18.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { configExpanded = !configExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Firebase Configuration",
+                                tint = Color(0xFF4F46E5),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Firebase Credentials Setup",
+                                color = Color(0xFF1E293B),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Icon(
+                            imageVector = if (configExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Expand",
+                            tint = Color(0xFF475569)
+                        )
+                    }
+
+                    AnimatedVisibility(visible = configExpanded) {
+                        Column(modifier = Modifier.padding(top = 16.dp)) {
+                            OutlinedTextField(
+                                value = firebaseDbUrl.value,
+                                onValueChange = { firebaseDbUrl.value = it },
+                                label = { Text("Database URL", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = Color(0xFF4F46E5),
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = firebaseApiKey.value,
+                                onValueChange = { firebaseApiKey.value = it },
+                                label = { Text("API Key", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = Color(0xFF4F46E5),
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = firebaseAppId.value,
+                                onValueChange = { firebaseAppId.value = it },
+                                label = { Text("Application ID", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = Color(0xFF4F46E5),
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                            )
+
+                            Button(
+                                onClick = {
+                                    val prefs = context.getSharedPreferences("secure_solver_prefs", Context.MODE_PRIVATE)
+                                    prefs.edit().apply {
+                                        putString("db_url", firebaseDbUrl.value)
+                                        putString("api_key", firebaseApiKey.value)
+                                        putString("app_id", firebaseAppId.value)
+                                    }.apply()
+                                    configExpanded = false
+                                    Toast.makeText(context, "Credentials Saved Successfully", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("SAVE CONFIGURATION", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -234,94 +367,149 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun ServerScreen() {
         var serverLogs by remember { mutableStateOf("Configuring signaling...") }
-        val clipboardManager = LocalClipboardManager.current
+        val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.2f,
+            targetValue = 0.8f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "Pulsating alpha"
+        )
 
         LaunchedEffect(Unit) {
             val roomId = (100000..999999).random().toString()
             localRoomId.value = roomId
 
-            signalingClient = FirebaseSignalingClient(
-                this@MainActivity,
-                firebaseDbUrl.value,
-                firebaseApiKey.value,
-                firebaseAppId.value
-            )
+            try {
+                signalingClient = FirebaseSignalingClient(
+                    this@MainActivity,
+                    firebaseDbUrl.value,
+                    firebaseApiKey.value,
+                    firebaseAppId.value
+                )
 
-            webRtcManager = WebRtcManager(
-                this@MainActivity,
-                eglBase.eglBaseContext,
-                onIceCandidateGenerated = { candidate ->
-                    signalingClient?.sendIceCandidate(roomId, true, candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
-                },
-                onRemoteStreamReceived = {},
-                onDataChannelMessage = { message ->
-                    handleControlMessage(message)
+                webRtcManager = WebRtcManager(
+                    this@MainActivity,
+                    eglBase.eglBaseContext,
+                    onIceCandidateGenerated = { candidate ->
+                        signalingClient?.sendIceCandidate(roomId, true, candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
+                    },
+                    onRemoteStreamReceived = {},
+                    onDataChannelMessage = { message ->
+                        handleControlMessage(message)
+                    }
+                )
+
+                // Start background foreground service safely
+                val intent = Intent(this@MainActivity, CameraService::class.java)
+                startService(intent)
+                bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+
+                webRtcManager!!.createPeerConnection(isCameraPhone = true)
+                webRtcManager!!.createOffer { desc ->
+                    signalingClient?.createRoom(roomId, desc.description)
+                    serverLogs = "Room $roomId created. Waiting for client handshake..."
                 }
-            )
 
-            // Start Foreground Service
-            val intent = Intent(this@MainActivity, CameraService::class.java)
-            startService(intent)
-            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-
-            val localSurface = webRtcManager!!.initLocalVideoSource()
-            cameraService?.bindCameraToSurface(localSurface)
-
-            webRtcManager!!.createPeerConnection(isCameraPhone = true)
-            webRtcManager!!.createOffer { desc ->
-                signalingClient?.createRoom(roomId, desc.description)
-                serverLogs = "Room $roomId created. Deep link copied to clipboard!"
-                clipboardManager.setText(AnnotatedString("https://myapp.com?room=$roomId"))
-            }
-
-            // Observe Answer SDP
-            lifecycleScope.launch {
-                signalingClient?.observeAnswer(roomId)?.collectLatest { answerSdp ->
-                    webRtcManager?.handleAnswer(answerSdp)
-                    isConnected.value = true
-                    serverLogs = "Client Connected!"
-                }
-            }
-
-            // Observe Remote Client ICE candidates
-            lifecycleScope.launch {
-                signalingClient?.observeIceCandidates(roomId)?.collectLatest { map ->
-                    val isCamera = map["isCamera"] as? Boolean ?: false
-                    if (!isCamera) {
-                        val sdp = map["sdp"] as String
-                        val sdpMid = map["sdpMid"] as String
-                        val sdpMLineIndex = (map["sdpMLineIndex"] as Long).toInt()
-                        webRtcManager?.addRemoteIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, sdp))
+                // Listen to client handshake
+                lifecycleScope.launch {
+                    signalingClient?.observeAnswer(roomId)?.collectLatest { answerSdp ->
+                        webRtcManager?.handleAnswer(answerSdp)
+                        isConnected.value = true
+                        serverLogs = "P2P WebRTC Connection Established."
                     }
                 }
+
+                // Listen to ICE Candidates
+                lifecycleScope.launch {
+                    signalingClient?.observeIceCandidates(roomId)?.collectLatest { map ->
+                        val isCamera = map["isCamera"] as? Boolean ?: false
+                        if (!isCamera) {
+                            val sdp = map["sdp"] as String
+                            val sdpMid = map["sdpMid"] as String
+                            val sdpMLineIndex = (map["sdpMLineIndex"] as Long).toInt()
+                            webRtcManager?.addRemoteIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, sdp))
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                serverLogs = "Signaling initialization error: ${e.message}"
             }
         }
 
         Column(
-            modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(24.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFF3F7FA))
+                    )
+                )
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            Box(
+                modifier = Modifier
+                    .size(100.dp)
+                    .clip(RoundedCornerShape(50.dp))
+                    .background(Color(0xFF4F46E5).copy(alpha = alpha))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Active Host",
+                    tint = Color.White,
+                    modifier = Modifier.size(48.dp).align(Alignment.Center)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(36.dp))
+
             Text(
-                text = "CAMERA STREAMER ACTIVE",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
+                text = "CAMERA STREAMING ACTIVE",
+                color = Color(0xFF0F172A),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 1.sp
             )
+
             Spacer(modifier = Modifier.height(16.dp))
+
             Text(
-                text = "Room ID: ${localRoomId.value}",
-                color = Color.Green,
-                fontSize = 24.sp,
+                text = "Room Connection ID",
+                color = Color(0xFF64748B),
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(32.dp))
             Text(
-                text = serverLogs,
-                color = Color.LightGray,
-                fontSize = 16.sp,
-                textAlign = TextAlign.Center
+                text = localRoomId.value,
+                color = Color(0xFF4F46E5),
+                fontSize = 36.sp,
+                fontWeight = FontWeight.ExtraBold
             )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.7f))
+                    .border(1.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(20.dp))
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = serverLogs,
+                    color = if (isConnected.value) Color(0xFF10B981) else Color(0xFF334155),
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 
@@ -330,7 +518,7 @@ class MainActivity : ComponentActivity() {
         var ipInput by remember { mutableStateOf(localRoomId.value) }
 
         Column(
-            modifier = Modifier.fillMaxSize().background(Color(0xFF121212))
+            modifier = Modifier.fillMaxSize().background(Color(0xFFF3F7FA))
         ) {
             if (!isConnected.value) {
                 Column(
@@ -339,37 +527,45 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "Join Video Stream Room",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        text = "Connect to Video Stream",
+                        color = Color(0xFF0F172A),
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(bottom = 24.dp)
                     )
                     OutlinedTextField(
                         value = ipInput,
                         onValueChange = { ipInput = it },
-                        label = { Text("6-Digit Room ID", color = Color.Gray) },
+                        label = { Text("6-Digit Room ID", color = Color(0xFF64748B)) },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
+                            focusedTextColor = Color(0xFF0F172A),
+                            unfocusedTextColor = Color(0xFF334155),
+                            focusedBorderColor = Color(0xFF4F46E5),
+                            unfocusedBorderColor = Color(0xFFCBD5E1)
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(32.dp))
                     Button(
                         onClick = {
-                            connectAsClient(ipInput)
+                            try {
+                                connectAsClient(ipInput)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                Toast.makeText(this@MainActivity, "Connection setup failed", Toast.LENGTH_SHORT).show()
+                            }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0)),
-                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(56.dp)
                     ) {
-                        Text("CONNECT")
+                        Text("CONNECT", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
             } else {
-                // Top 50% - WebRTC Stream Display
+                // Top 50% - Video stream surface
                 Box(
-                    modifier = Modifier.fillMaxWidth().weight(1f).background(Color.Black),
+                    modifier = Modifier.fillMaxWidth().weight(1.2f).background(Color.Black),
                     contentAlignment = Alignment.Center
                 ) {
                     if (remoteVideoTrack.value != null) {
@@ -384,25 +580,25 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        CircularProgressIndicator(color = Color(0xFF4A00E0))
+                        CircularProgressIndicator(color = Color(0xFF4F46E5))
                     }
                 }
 
-                // Bottom 50% - Client control grid
+                // Bottom 50% - Receiver client controllers
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .background(Color(0xFF1E1E1E))
+                        .background(Color.White)
                         .padding(24.dp),
                     verticalArrangement = Arrangement.SpaceEvenly,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "RECEIVER CONTROLS",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
+                        text = "STREAM RECEIVER CONTROLS",
+                        color = Color(0xFF0F172A),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
                         letterSpacing = 1.sp
                     )
 
@@ -411,39 +607,33 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         Button(
-                            onClick = {
-                                triggerSolverCapture("MCQ")
-                            },
+                            onClick = { triggerSolverCapture("MCQ") },
                             enabled = !isProcessing.value,
                             modifier = Modifier.weight(1f).height(80.dp).padding(8.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E2DE2))
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A))
                         ) {
-                            Text("Solve MCQ", fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            Text("Solve MCQ", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
                         }
 
                         Button(
-                            onClick = {
-                                triggerSolverCapture("CODE")
-                            },
+                            onClick = { triggerSolverCapture("CODE") },
                             enabled = !isProcessing.value,
                             modifier = Modifier.weight(1f).height(80.dp).padding(8.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0))
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
                         ) {
-                            Text("Solve Code", fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            Text("Solve Code", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color(0xFF0F172A))
                         }
                     }
 
                     Button(
-                        onClick = {
-                            webRtcManager?.sendDataMessage("TOGGLE_FLASH")
-                        },
+                        onClick = { webRtcManager?.sendDataMessage("TOGGLE_FLASH") },
                         modifier = Modifier.fillMaxWidth().height(60.dp).padding(8.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
                     ) {
-                        Text("Toggle Flash", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Toggle Camera Flash", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
                     }
                 }
             }
@@ -475,7 +665,6 @@ class MainActivity : ComponentActivity() {
 
         webRtcManager?.createPeerConnection(isCameraPhone = false)
 
-        // Observe Offer SDP
         lifecycleScope.launch {
             signalingClient?.observeOffer(roomId)?.collectLatest { offerSdp ->
                 webRtcManager?.handleOffer(offerSdp) { answerDesc ->
@@ -484,7 +673,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Observe Remote Server ICE candidates
         lifecycleScope.launch {
             signalingClient?.observeIceCandidates(roomId)?.collectLatest { map ->
                 val isCamera = map["isCamera"] as? Boolean ?: false
@@ -515,7 +703,6 @@ class MainActivity : ComponentActivity() {
                 cameraService?.toggleFlash()
             }
             message.startsWith("START_IMG:") -> {
-                expectedImageSize = message.substringAfter("START_IMG:").toInt()
                 receivedImageBytes.reset()
             }
             message.startsWith("CHUNK:") -> {
@@ -553,7 +740,6 @@ class MainActivity : ComponentActivity() {
                 if (success) {
                     offset = end
                 }
-                // Allow network buffer breathing room
                 kotlinx.coroutines.delay(12)
             }
             webRtcManager?.sendDataMessage("END_IMG")
@@ -563,9 +749,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         intent?.data?.let { uri ->
-            val room = uri.getQueryParameter("room")
-            if (!room.isNullOrEmpty()) {
-                localRoomId.value = room
+            val roomVal = uri.getQueryParameter("room")
+            if (!roomVal.isNullOrEmpty()) {
+                localRoomId.value = roomVal
             }
         }
     }
