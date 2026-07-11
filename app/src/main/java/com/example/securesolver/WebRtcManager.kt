@@ -21,6 +21,8 @@ class WebRtcManager(
     private var localSurface: Surface? = null
     private var dataChannel: DataChannel? = null
 
+    fun getLocalVideoTrack(): VideoTrack? = localVideoTrack
+
     init {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context)
@@ -56,9 +58,14 @@ class WebRtcManager(
     }
 
     fun createPeerConnection(isCameraPhone: Boolean) {
-        val rtcConfig = PeerConnection.RTCConfiguration(
-            listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
-        ).apply {
+        val iceServers = listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.services.mozilla.com").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.xten.com").createIceServer()
+        )
+        val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         }
 
@@ -115,9 +122,7 @@ class WebRtcManager(
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)
 
         if (isCameraPhone) {
-            localVideoTrack?.let {
-                peerConnection?.addTrack(it, listOf("ARDAMS"))
-            }
+            addLocalVideoTrackToConnection()
             val dcInit = DataChannel.Init()
             dataChannel = peerConnection?.createDataChannel("control", dcInit)
             dataChannel?.registerObserver(object : DataChannel.Observer {
@@ -130,6 +135,12 @@ class WebRtcManager(
                     onDataChannelMessage(String(bytes))
                 }
             })
+        }
+    }
+
+    fun addLocalVideoTrackToConnection() {
+        localVideoTrack?.let { track ->
+            peerConnection?.addTrack(track, listOf("ARDAMS"))
         }
     }
 
