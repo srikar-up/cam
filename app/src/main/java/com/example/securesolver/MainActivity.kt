@@ -33,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -78,8 +79,10 @@ class MainActivity : ComponentActivity() {
     private var isProcessing = mutableStateOf(false)
     private var activeSolverPromptType = mutableStateOf("")
     
-    // UI Navigation State
+    // UI Navigation & Theme State
     private var currentRoleState = mutableStateOf<String?>(null)
+    private var activeThemeState = mutableStateOf("SLATE")
+    private var isLoadingState = mutableStateOf(true)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -131,11 +134,12 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(missingPermissions.toTypedArray())
         }
 
-        // Load credentials from SharedPreferences
+        // Load credentials and theme from SharedPreferences
         val prefs = getSharedPreferences("secure_solver_prefs", Context.MODE_PRIVATE)
         firebaseDbUrl.value = prefs.getString("db_url", BuildConfig.FIREBASE_DB_URL) ?: BuildConfig.FIREBASE_DB_URL
         firebaseApiKey.value = prefs.getString("api_key", BuildConfig.FIREBASE_API_KEY) ?: BuildConfig.FIREBASE_API_KEY
         firebaseAppId.value = prefs.getString("app_id", BuildConfig.FIREBASE_APP_ID) ?: BuildConfig.FIREBASE_APP_ID
+        activeThemeState.value = prefs.getString("active_theme", "SLATE") ?: "SLATE"
 
         // Parse deep link room ID
         intent?.data?.let { uri ->
@@ -145,14 +149,111 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // 2-second splash loading delay
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(2000)
+            isLoadingState.value = false
+        }
+
         setContent {
             SecureSolverTheme {
+                val themeData = getThemeColors()
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = Color(0xFFF3F7FA) // Soft light canvas
+                    color = themeData.first.first() // Light canvas base
                 ) {
-                    MainScreen()
+                    if (isLoadingState.value) {
+                        LoadingScreen()
+                    } else {
+                        MainScreen()
+                    }
                 }
+            }
+        }
+    }
+
+    @Composable
+    fun getThemeColors(): Triple<List<Color>, Color, Color> {
+        return when (activeThemeState.value) {
+            "EMERALD" -> Triple(
+                listOf(Color(0xFFF0FDFA), Color(0xFFE6F4F1), Color(0xFFDFF0EB)),
+                Color(0xFF0F766E), // Deep Emerald Primary
+                Color(0xFF14B8A6)  // Bright Teal Accent
+            )
+            "ROSE" -> Triple(
+                listOf(Color(0xFFFFF1F2), Color(0xFFFEE2E2), Color(0xFFFCE7F3)),
+                Color(0xFFBE123C), // Deep Rose Primary
+                Color(0xFFF43F5E)  // Bright Pink Accent
+            )
+            else -> Triple(
+                listOf(Color(0xFFF8FAFC), Color(0xFFF1F5F9), Color(0xFFE2E8F0)),
+                Color(0xFF0F172A), // Slate Grey Primary
+                Color(0xFF6366F1)  // Indigo Accent
+            )
+        }
+    }
+
+    @Composable
+    fun LoadingScreen() {
+        val transition = rememberInfiniteTransition(label = "RingRotation")
+        val rotation by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "Rotation angle"
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFF8FAFC))
+                    )
+                ),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Elegant Text Brand
+            Text(
+                text = "CAMDROID",
+                fontSize = 44.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF0F172A),
+                fontFamily = FontFamily.SansSerif,
+                letterSpacing = 5.sp,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = "P2P REAL-TIME STREAM SOLVER",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Black,
+                color = Color(0xFF64748B),
+                letterSpacing = 1.5.sp,
+                modifier = Modifier.padding(bottom = 64.dp)
+            )
+            
+            // Custom modern circular ring indicator
+            Box(
+                modifier = Modifier
+                    .size(60.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = Color(0xFFE2E8F0),
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.fillMaxSize()
+                )
+                CircularProgressIndicator(
+                    color = Color(0xFF0F172A),
+                    strokeWidth = 3.dp,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .align(Alignment.Center)
+                )
             }
         }
     }
@@ -181,7 +282,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resetConnectionState() {
-        // Safely unbind service if active
         if (isBound) {
             try {
                 unbindService(serviceConnection)
@@ -191,7 +291,6 @@ class MainActivity : ComponentActivity() {
             isBound = false
         }
         
-        // Stop foreground camera service
         try {
             val intent = Intent(this, CameraService::class.java)
             stopService(intent)
@@ -199,7 +298,6 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
 
-        // Close peer connection
         try {
             webRtcManager?.close()
         } catch (e: Exception) {
@@ -210,7 +308,6 @@ class MainActivity : ComponentActivity() {
         signalingClient = null
         cameraService = null
         
-        // Reset states
         isConnected.value = false
         remoteVideoTrack.value = null
         localRoomId.value = ""
@@ -220,47 +317,62 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun RoleSelectionScreen(onRoleSelected: (String) -> Unit) {
         val context = LocalContext.current
+        val themeColors = getThemeColors()
         var showSettingsDialog by remember { mutableStateOf(false) }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFF0F4F8), Color(0xFFE2EAF4))
-                    )
-                )
+                .background(Brush.verticalGradient(colors = themeColors.first))
         ) {
+            // Settings Gear Trigger - Re-positioned and styled with subtle modern shadow
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(24.dp)
+                    .size(48.dp)
+                    .shadow(4.dp, RoundedCornerShape(24.dp))
+                    .background(Color.White, RoundedCornerShape(24.dp))
+                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
+                    .clickable { showSettingsDialog = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Configuration Setup",
+                    tint = Color(0xFF334155),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp)
+                    .padding(horizontal = 28.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.Top,
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(modifier = Modifier.height(84.dp))
-
-                // Premium Minimalist Title
+                // Brand Header with clean modern typography
                 Text(
-                    text = "SECURE SOLVER",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Black,
+                    text = "CAMDROID",
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0F172A),
                     fontFamily = FontFamily.SansSerif,
-                    letterSpacing = 2.sp,
+                    letterSpacing = 4.sp,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
                 Text(
-                    text = "Modern Light P2P Streaming",
+                    text = "High-Fidelity Camera Solver Engine",
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.padding(bottom = 84.dp)
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF475569),
+                    modifier = Modifier.padding(bottom = 56.dp)
                 )
 
-                // Action Selection Buttons (Modern Minimalist Solid Slate & Bordered layouts)
-                Button(
+                // Host Card
+                Card(
                     onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                             Toast.makeText(context, "Camera permission required to start Host", Toast.LENGTH_LONG).show()
@@ -273,18 +385,36 @@ class MainActivity : ComponentActivity() {
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(68.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp)),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
-                    shape = RoundedCornerShape(16.dp)
+                        .padding(bottom = 20.dp)
+                        .height(96.dp)
+                        .shadow(6.dp, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = themeColors.second),
+                    shape = RoundedCornerShape(20.dp)
                 ) {
-                    Text("HOST CAMERA MODE", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "HOST CAMERA MODE",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Stream local camera feeds via P2P channels",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Button(
+                // Client Card (Minimal Bordered Style)
+                Card(
                     onClick = {
                         if (firebaseDbUrl.value.contains("fake-db") || firebaseApiKey.value.contains("FakeKey")) {
                             Toast.makeText(context, "Please configure valid Firebase credentials first", Toast.LENGTH_LONG).show()
@@ -295,40 +425,43 @@ class MainActivity : ComponentActivity() {
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(68.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.5.dp, Color(0xFF0F172A), RoundedCornerShape(16.dp)),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                    shape = RoundedCornerShape(16.dp)
+                        .height(96.dp)
+                        .shadow(4.dp, RoundedCornerShape(20.dp))
+                        .border(1.5.dp, themeColors.second, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(20.dp)
                 ) {
-                    Text("RECEIVER CLIENT MODE", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "RECEIVER CLIENT MODE",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black,
+                            color = themeColors.second
+                        )
+                        Text(
+                            text = "Receive streams and execute remote commands",
+                            fontSize = 12.sp,
+                            color = Color(0xFF64748B),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
-            }
-
-            // Floating Settings Icon (Clean Gear button)
-            IconButton(
-                onClick = { showSettingsDialog = true },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(24.dp)
-                    .size(48.dp)
-                    .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
-                    .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(24.dp))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Configuration Setup",
-                    tint = Color(0xFF1E293B)
-                )
             }
         }
 
-        // Settings Dialog Modal
+        // Settings Dialog Modal (With theme color selector pill toggles)
         if (showSettingsDialog) {
             Dialog(onDismissRequest = { showSettingsDialog = false }) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .shadow(12.dp, RoundedCornerShape(28.dp))
                         .clip(RoundedCornerShape(28.dp))
                         .background(Color.White)
                         .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(28.dp))
@@ -336,12 +469,53 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column {
                         Text(
-                            text = "Firebase Credentials",
-                            fontSize = 18.sp,
+                            text = "Configuration & Themes",
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.Black,
                             color = Color(0xFF0F172A),
-                            modifier = Modifier.padding(bottom = 20.dp)
+                            modifier = Modifier.padding(bottom = 16.dp)
                         )
+
+                        // Color Theme Selection Pill Header
+                        Text(
+                            text = "ACTIVE STYLE COLOR",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF64748B),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            val themes = listOf("SLATE" to "Slate", "EMERALD" to "Emerald", "ROSE" to "Rose")
+                            themes.forEach { theme ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(4.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (activeThemeState.value == theme.first) Color(0xFFF8FAFC) else Color.Transparent
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (activeThemeState.value == theme.first) themeColors.second else Color(0xFFE2E8F0),
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable { activeThemeState.value = theme.first },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = theme.second,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (activeThemeState.value == theme.first) themeColors.second else Color(0xFF475569),
+                                        modifier = Modifier.padding(vertical = 10.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         OutlinedTextField(
                             value = firebaseDbUrl.value,
@@ -350,7 +524,7 @@ class MainActivity : ComponentActivity() {
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color(0xFF0F172A),
                                 unfocusedTextColor = Color(0xFF334155),
-                                focusedBorderColor = Color(0xFF4F46E5),
+                                focusedBorderColor = themeColors.third,
                                 unfocusedBorderColor = Color(0xFFCBD5E1)
                             ),
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
@@ -363,7 +537,7 @@ class MainActivity : ComponentActivity() {
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color(0xFF0F172A),
                                 unfocusedTextColor = Color(0xFF334155),
-                                focusedBorderColor = Color(0xFF4F46E5),
+                                focusedBorderColor = themeColors.third,
                                 unfocusedBorderColor = Color(0xFFCBD5E1)
                             ),
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
@@ -376,7 +550,7 @@ class MainActivity : ComponentActivity() {
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color(0xFF0F172A),
                                 unfocusedTextColor = Color(0xFF334155),
-                                focusedBorderColor = Color(0xFF4F46E5),
+                                focusedBorderColor = themeColors.third,
                                 unfocusedBorderColor = Color(0xFFCBD5E1)
                             ),
                             modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
@@ -389,12 +563,13 @@ class MainActivity : ComponentActivity() {
                                     putString("db_url", firebaseDbUrl.value)
                                     putString("api_key", firebaseApiKey.value)
                                     putString("app_id", firebaseAppId.value)
+                                    putString("active_theme", activeThemeState.value)
                                 }.apply()
                                 showSettingsDialog = false
-                                Toast.makeText(context, "Credentials Saved Successfully", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Settings Saved Successfully", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.fillMaxWidth().height(52.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColors.second),
                             shape = RoundedCornerShape(14.dp)
                         ) {
                             Text("SAVE & CLOSE", fontWeight = FontWeight.Bold, color = Color.White)
@@ -408,6 +583,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun ServerScreen(onBack: () -> Unit) {
         var serverLogs by remember { mutableStateOf("Configuring signaling...") }
+        val themeColors = getThemeColors()
         val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
         val alpha by infiniteTransition.animateFloat(
             initialValue = 0.2f,
@@ -451,7 +627,6 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
-                // Start background foreground service safely
                 val intent = Intent(this@MainActivity, CameraService::class.java)
                 startService(intent)
                 bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -462,14 +637,12 @@ class MainActivity : ComponentActivity() {
                     serverLogs = "Room $roomId created. Waiting for client handshake..."
                 }
 
-                // Listen to client handshake
                 lifecycleScope.launch {
                     signalingClient?.observeAnswer(roomId)?.collectLatest { answerSdp ->
                         webRtcManager?.handleAnswer(answerSdp)
                     }
                 }
 
-                // Listen to ICE Candidates (Safe Casting)
                 lifecycleScope.launch {
                     signalingClient?.observeIceCandidates(roomId)?.collectLatest { map ->
                         val isCamera = map["isCamera"] as? Boolean ?: false
@@ -493,20 +666,17 @@ class MainActivity : ComponentActivity() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFFFFFFFF), Color(0xFFF3F7FA))
-                    )
-                )
+                .background(Brush.verticalGradient(colors = themeColors.first))
         ) {
-            // Arrow Back Button to home page
+            // Arrow Back Button with professional clean look
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(24.dp)
                     .size(48.dp)
-                    .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
+                    .shadow(2.dp, RoundedCornerShape(24.dp))
+                    .background(Color.White, RoundedCornerShape(24.dp))
                     .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
             ) {
                 Icon(
@@ -523,18 +693,27 @@ class MainActivity : ComponentActivity() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
+                // Pulsing glowing center connection radar circle
                 Box(
                     modifier = Modifier
-                        .size(100.dp)
-                        .clip(RoundedCornerShape(50.dp))
-                        .background(Color(0xFF4F46E5).copy(alpha = alpha))
+                        .size(110.dp)
+                        .clip(RoundedCornerShape(55.dp))
+                        .background(themeColors.third.copy(alpha = alpha))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Active Host",
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp).align(Alignment.Center)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(36.dp))
+                            .background(themeColors.second)
+                            .align(Alignment.Center)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Active Host",
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp).align(Alignment.Center)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(36.dp))
@@ -557,19 +736,21 @@ class MainActivity : ComponentActivity() {
                 )
                 Text(
                     text = localRoomId.value,
-                    color = Color(0xFF4F46E5),
-                    fontSize = 36.sp,
+                    color = themeColors.second,
+                    fontSize = 38.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(36.dp))
 
+                // Connection diagnostics panel
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.7f))
-                        .border(1.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(20.dp))
+                        .shadow(4.dp, RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
                         .padding(20.dp)
                 ) {
                     Text(
@@ -577,7 +758,8 @@ class MainActivity : ComponentActivity() {
                         color = if (isConnected.value) Color(0xFF10B981) else Color(0xFF334155),
                         fontSize = 15.sp,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -587,20 +769,21 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun ClientScreen(onBack: () -> Unit) {
         var ipInput by remember { mutableStateOf(localRoomId.value) }
+        val themeColors = getThemeColors()
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFFF3F7FA))
+                .background(themeColors.first.first())
         ) {
-            // Header with Back Button (Display to allow exit)
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(24.dp)
                     .size(48.dp)
-                    .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(24.dp))
+                    .shadow(2.dp, RoundedCornerShape(24.dp))
+                    .background(Color.White, RoundedCornerShape(24.dp))
                     .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
             ) {
                 Icon(
@@ -635,7 +818,7 @@ class MainActivity : ComponentActivity() {
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color(0xFF0F172A),
                                 unfocusedTextColor = Color(0xFF334155),
-                                focusedBorderColor = Color(0xFF4F46E5),
+                                focusedBorderColor = themeColors.third,
                                 unfocusedBorderColor = Color(0xFFCBD5E1)
                             ),
                             modifier = Modifier.fillMaxWidth()
@@ -654,7 +837,7 @@ class MainActivity : ComponentActivity() {
                                     Toast.makeText(this@MainActivity, "Connection setup failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColors.second),
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -664,7 +847,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 } else {
-                    // Split screen: Top 50% - Video surface, Bottom 50% - controllers
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(
                             modifier = Modifier
@@ -685,7 +867,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             } else {
                                 CircularProgressIndicator(
-                                    color = Color(0xFF4F46E5),
+                                    color = themeColors.third,
                                     modifier = Modifier.align(Alignment.Center)
                                 )
                             }
@@ -721,7 +903,7 @@ class MainActivity : ComponentActivity() {
                                         .height(80.dp)
                                         .padding(8.dp),
                                     shape = RoundedCornerShape(14.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A))
+                                    colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
                                 ) {
                                     Text("Solve MCQ", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
                                 }
@@ -793,7 +975,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Listen to ICE Candidates (Safe Casting)
         lifecycleScope.launch {
             signalingClient?.observeIceCandidates(roomId)?.collectLatest { map ->
                 val isCamera = map["isCamera"] as? Boolean ?: false
