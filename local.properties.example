@@ -1,0 +1,4 @@
+# Copy this file to local.properties and fill in your actual credentials
+firebase.api.key=YOUR_API_KEY
+firebase.app.id=YOUR_APP_ID
+firebase.db.url=YOUR_DATABASE_URL

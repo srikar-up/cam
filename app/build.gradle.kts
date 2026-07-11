@@ -1,7 +1,28 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(FileInputStream(localPropertiesFile))
+}
+
+val extFirebaseApiKey: String = System.getenv("FIREBASE_API_KEY")
+    ?: localProperties.getProperty("firebase.api.key")
+    ?: "AIzaSyFakeApiKey"
+
+val extFirebaseAppId: String = System.getenv("FIREBASE_APP_ID")
+    ?: localProperties.getProperty("firebase.app.id")
+    ?: "1:fake:web:appid"
+
+val extFirebaseDbUrl: String = System.getenv("FIREBASE_DB_URL")
+    ?: localProperties.getProperty("firebase.db.url")
+    ?: "https://fake-db.firebaseio.com"
 
 android {
     namespace = "com.example.securesolver"
@@ -18,6 +39,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$extFirebaseApiKey\"")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"$extFirebaseAppId\"")
+        buildConfigField("String", "FIREBASE_DB_URL", "\"$extFirebaseDbUrl\"")
     }
 
     buildTypes {
@@ -38,6 +63,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"

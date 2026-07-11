@@ -25,6 +25,10 @@ jobs:
         gradle-version: 8.5
 
     - name: Build Debug APK
+      env:
+        FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+        FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+        FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
       run: gradle assembleDebug
 
 
