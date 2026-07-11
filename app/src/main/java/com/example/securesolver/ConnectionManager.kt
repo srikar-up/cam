@@ -12,7 +12,6 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
 
 class ConnectionManager {
     private val selector = ActorSelectorManager(Dispatchers.IO)
@@ -22,7 +21,7 @@ class ConnectionManager {
     // Starts server socket to listen for incoming connections
     suspend fun startServer(port: Int, onMessageReceived: suspend (Socket, String) -> Unit) = withContext(Dispatchers.IO) {
         try {
-            serverSocket = aSocket(selector).tcp().bind(InetSocketAddress("0.0.0.0", port))
+            serverSocket = aSocket(selector).tcp().bind(host = "0.0.0.0", port = port)
             while (true) {
                 val socket = serverSocket?.accept() ?: break
                 handleClientConnection(socket, onMessageReceived)
@@ -48,7 +47,7 @@ class ConnectionManager {
 
     // Connects client to server
     suspend fun connectToServer(ip: String, port: Int): Socket = withContext(Dispatchers.IO) {
-        val socket = aSocket(selector).tcp().connect(InetSocketAddress(ip, port))
+        val socket = aSocket(selector).tcp().connect(host = ip, port = port)
         clientSocket = socket
         socket
     }
