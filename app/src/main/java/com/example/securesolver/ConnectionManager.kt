@@ -21,7 +21,7 @@ class ConnectionManager {
     // Starts server socket to listen for incoming connections
     suspend fun startServer(port: Int, onMessageReceived: suspend (Socket, String) -> Unit) = withContext(Dispatchers.IO) {
         try {
-            serverSocket = aSocket(selector).tcp().bind(host = "0.0.0.0", port = port)
+            serverSocket = aSocket(selector).tcp().bind("0.0.0.0", port)
             while (true) {
                 val socket = serverSocket?.accept() ?: break
                 handleClientConnection(socket, onMessageReceived)
@@ -47,7 +47,7 @@ class ConnectionManager {
 
     // Connects client to server
     suspend fun connectToServer(ip: String, port: Int): Socket = withContext(Dispatchers.IO) {
-        val socket = aSocket(selector).tcp().connect(host = ip, port = port)
+        val socket = aSocket(selector).tcp().connect(ip, port)
         clientSocket = socket
         socket
     }
