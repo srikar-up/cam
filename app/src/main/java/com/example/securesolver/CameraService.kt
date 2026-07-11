@@ -7,40 +7,14 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.view.Surface
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import java.io.ByteArrayOutputStream
-import java.io.File
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
-class CameraService : Service(), LifecycleOwner {
+class CameraService : Service() {
 
-    private lateinit var cameraExecutor: ExecutorService
-    private var imageCapture: ImageCapture? = null
-    private var camera: Camera? = null
-    private var isFlashEnabled = false
     private val binder = CameraBinder()
-    
-    private val lifecycleRegistry = LifecycleRegistry(this)
-
-    override val lifecycle: Lifecycle
-        get() = lifecycleRegistry
 
     inner class CameraBinder : Binder() {
         fun getService(): CameraService = this@CameraService
@@ -48,9 +22,7 @@ class CameraService : Service(), LifecycleOwner {
 
     override fun onCreate() {
         super.onCreate()
-        cameraExecutor = Executors.newSingleThreadExecutor()
         startForegroundService()
-        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
     private fun startForegroundService() {
@@ -84,74 +56,6 @@ class CameraService : Service(), LifecycleOwner {
         } else {
             startForeground(1, notification)
         }
-    }
-
-    // Bind using the active Activity's lifecycleOwner to guarantee active CameraX updates
-    fun bindCameraToSurface(lifecycleOwner: LifecycleOwner, targetSurface: Surface) {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder().build()
-            
-            preview.setSurfaceProvider { request ->
-                request.provideSurface(targetSurface, ContextCompat.getMainExecutor(this)) {}
-            }
-
-            imageCapture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .build()
-
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                camera = cameraProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview,
-                    imageCapture
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    fun captureHighQualityImage(onImageCaptured: (ByteArray) -> Unit) {
-        val capture = imageCapture ?: return
-        val tempFile = File(cacheDir, "camera_capture.jpg")
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
-
-        capture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    cameraExecutor.execute {
-                        val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath)
-                        val stream = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
-                        onImageCaptured(stream.toByteArray())
-                    }
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    exception.printStackTrace()
-                }
-            }
-        )
-    }
-
-    fun toggleFlash() {
-        isFlashEnabled = !isFlashEnabled
-        camera?.cameraControl?.enableTorch(isFlashEnabled)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
-        cameraExecutor.shutdown()
     }
 
     override fun onBind(intent: Intent): IBinder {

@@ -111,18 +111,11 @@ class MainActivity : ComponentActivity() {
     private var discoveryListener: android.net.nsd.NsdManager.DiscoveryListener? = null
     private val discoveredHostsList = mutableStateListOf<Pair<String, Int>>()
 
-    private var localSurfaceReference: Surface? = null
-
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as CameraService.CameraBinder
             cameraService = binder.getService()
             isBound = true
-            
-            // Instantly bind the camera to the surface texture created by WebRTC
-            localSurfaceReference?.let { surface ->
-                cameraService?.bindCameraToSurface(this@MainActivity, surface)
-            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -905,7 +898,7 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        text = "Version: v1.0.8",
+                        text = "Version: v1.1.0",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF94A3B8),
@@ -951,8 +944,7 @@ class MainActivity : ComponentActivity() {
                     )
 
                     // CRITICAL: Initialize local video tracks BEFORE generating the SDP Offer
-                    val localSurface = webRtcManager!!.initLocalVideoSource()
-                    localSurfaceReference = localSurface
+                    webRtcManager!!.initLocalVideoSource()
                     localVideoTrackState.value = webRtcManager!!.getLocalVideoTrack()
 
                     // Start camera foreground service safely
@@ -1039,8 +1031,7 @@ class MainActivity : ComponentActivity() {
                     )
 
                     // CRITICAL: Initialize local video tracks BEFORE generating the SDP Offer
-                    val localSurface = webRtcManager!!.initLocalVideoSource()
-                    localSurfaceReference = localSurface
+                    webRtcManager!!.initLocalVideoSource()
                     localVideoTrackState.value = webRtcManager!!.getLocalVideoTrack()
 
                     val intent = Intent(this@MainActivity, CameraService::class.java)
@@ -1730,12 +1721,14 @@ class MainActivity : ComponentActivity() {
     private fun handleControlMessage(message: String) {
         when {
             message == "CAPTURE_HQ" -> {
-                cameraService?.captureHighQualityImage { bytes ->
-                    sendImageOverDataChannel(bytes)
+                webRtcManager?.captureCurrentFrame { bitmap ->
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                    sendImageOverDataChannel(stream.toByteArray())
                 }
             }
             message == "TOGGLE_FLASH" -> {
-                cameraService?.toggleFlash()
+                // No-op (handled natively by WebRTC camera capturer parameters)
             }
             message.startsWith("START_IMG:") -> {
                 receivedImageBytes.reset()
