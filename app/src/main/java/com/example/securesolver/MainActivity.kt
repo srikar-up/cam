@@ -111,7 +111,7 @@ class MainActivity : ComponentActivity() {
             webRtcManager?.let { manager ->
                 try {
                     val localSurface = manager.initLocalVideoSource()
-                    cameraService?.bindCameraToSurface(localSurface)
+                    cameraService?.bindCameraToSurface(this@MainActivity, localSurface)
                     manager.addLocalVideoTrackToConnection()
                     // Set local video track state to render preview viewfinder on Host screen
                     localVideoTrackState.value = manager.getLocalVideoTrack()
@@ -1052,7 +1052,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun ClientScreen(onBack: () -> Unit) {
-        var ipInput by remember { mutableStateOf(if (activeConnectionModeState.value == "LAN") "" else localRoomId.value) }
+        var ipInput by remember { mutableStateOf("") }
+        var portInput by remember { mutableStateOf("8890") }
+        var roomIdInput by remember { mutableStateOf(localRoomId.value) }
         val themeColors = getThemeColors()
 
         Box(
@@ -1089,45 +1091,75 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = if (activeConnectionModeState.value == "LAN") "Enter Host IP Address" else "Connect to Video Stream",
+                            text = if (activeConnectionModeState.value == "LAN") "Enter Host Connection Details" else "Connect to Video Stream",
                             color = Color(0xFF0F172A),
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Black,
                             modifier = Modifier.padding(bottom = 24.dp)
                         )
-                        OutlinedTextField(
-                            value = ipInput,
-                            onValueChange = { ipInput = it },
-                            label = { Text(if (activeConnectionModeState.value == "LAN") "e.g. 192.168.1.100:8890" else "6-Digit Room ID", color = Color(0xFF64748B)) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color(0xFF0F172A),
-                                unfocusedTextColor = Color(0xFF334155),
-                                focusedBorderColor = themeColors.third,
-                                unfocusedBorderColor = Color(0xFFCBD5E1)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+
+                        if (activeConnectionModeState.value == "LAN") {
+                            OutlinedTextField(
+                                value = ipInput,
+                                onValueChange = { ipInput = it },
+                                label = { Text("Host IP Address (e.g. 192.168.1.100)", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = themeColors.third,
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = portInput,
+                                onValueChange = { portInput = it },
+                                label = { Text("Port (default 8890)", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = themeColors.third,
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            OutlinedTextField(
+                                value = roomIdInput,
+                                onValueChange = { roomIdInput = it },
+                                label = { Text("6-Digit Room ID", color = Color(0xFF64748B)) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF0F172A),
+                                    unfocusedTextColor = Color(0xFF334155),
+                                    focusedBorderColor = themeColors.third,
+                                    unfocusedBorderColor = Color(0xFFCBD5E1)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(32.dp))
                         Button(
                             onClick = {
                                 if (activeConnectionModeState.value == "LAN") {
-                                    if (ipInput.trim().isEmpty() || !ipInput.contains(":")) {
-                                        Toast.makeText(this@MainActivity, "Please enter IP and Port (e.g. 192.168.1.100:8890)", Toast.LENGTH_SHORT).show()
+                                    if (ipInput.trim().isEmpty() || portInput.trim().isEmpty()) {
+                                        Toast.makeText(this@MainActivity, "Please enter both IP Address and Port", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
                                     try {
-                                        connectAsClientLan(ipInput)
+                                        connectAsClientLan("$ipInput:$portInput")
                                     } catch (e: Exception) {
                                         e.printStackTrace()
                                         Toast.makeText(this@MainActivity, "LAN connection error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
-                                    if (ipInput.trim().length != 6) {
+                                    if (roomIdInput.trim().length != 6) {
                                         Toast.makeText(this@MainActivity, "Please enter a valid 6-digit Room ID", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
                                     try {
-                                        connectAsClient(ipInput)
+                                        connectAsClient(roomIdInput)
                                     } catch (e: Exception) {
                                         e.printStackTrace()
                                         Toast.makeText(this@MainActivity, "Connection setup failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()

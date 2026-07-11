@@ -37,7 +37,6 @@ class CameraService : Service(), LifecycleOwner {
     private var isFlashEnabled = false
     private val binder = CameraBinder()
     
-    // Explicit LifecycleRegistry to manage state tracking on Android 16+
     private val lifecycleRegistry = LifecycleRegistry(this)
 
     override val lifecycle: Lifecycle
@@ -51,8 +50,6 @@ class CameraService : Service(), LifecycleOwner {
         super.onCreate()
         cameraExecutor = Executors.newSingleThreadExecutor()
         startForegroundService()
-        
-        // Force the LifecycleState to RESUMED to trick CameraX into starting camera capture
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
@@ -89,14 +86,14 @@ class CameraService : Service(), LifecycleOwner {
         }
     }
 
-    fun bindCameraToSurface(targetSurface: Surface) {
+    // Bind using the active Activity's lifecycleOwner to guarantee active CameraX updates
+    fun bindCameraToSurface(lifecycleOwner: LifecycleOwner, targetSurface: Surface) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
             val preview = Preview.Builder().build()
             
-            // Bridge the CameraX frame output to the WebRTC video capturer Surface
             preview.setSurfaceProvider { request ->
                 request.provideSurface(targetSurface, ContextCompat.getMainExecutor(this)) {}
             }
@@ -110,7 +107,7 @@ class CameraService : Service(), LifecycleOwner {
             try {
                 cameraProvider.unbindAll()
                 camera = cameraProvider.bindToLifecycle(
-                    this,
+                    lifecycleOwner,
                     cameraSelector,
                     preview,
                     imageCapture
