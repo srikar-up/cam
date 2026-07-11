@@ -56,9 +56,9 @@ class MainActivity : ComponentActivity() {
     private var isBound = false
 
     // Firebase Credentials (configurable via UI)
-    private var firebaseDbUrl = mutableStateOf("https://securesolver-default-rtdb.firebaseio.com")
-    private var firebaseApiKey = mutableStateOf("AIzaSyFakeApiKey1234567890")
-    private var firebaseAppId = mutableStateOf("1:123456789:android:fakeappid")
+    private var firebaseDbUrl = mutableStateOf("https://camdroid-e1a26-default-rtdb.firebaseio.com")
+    private var firebaseApiKey = mutableStateOf("AIzaSyBku5JxgkqB8-fWtO_CPSt_0Uz6lf5jX3E")
+    private var firebaseAppId = mutableStateOf("1:665165005212:web:1329b6eac25d0120b1c859")
 
     // Peer connection state tracking
     private var localRoomId = mutableStateOf("")
