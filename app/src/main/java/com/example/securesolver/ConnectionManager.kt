@@ -86,7 +86,7 @@ class ConnectionManager {
 
     fun close() {
         try {
-            writeChannel?.close()
+            writeChannel?.close(null)
             serverSocket?.close()
             clientSocket?.close()
         } catch (e: Exception) {
