@@ -39,4 +39,4 @@ A local network (Wi-Fi/Hotspot) peer-to-peer surveillance and AI-solving system 
 ## 4. OS Compliance Constraints
 - **Zero-Cloud Policy**: Direct P2P only.
 - **Android Background Limits**: Device A must use `ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA` with a persistent notification to keep the camera active when the screen is locked.
-- **Clipboard Limits**: The system clipboard cannot be written to while the app is in the background (Android 10+). Prompt handling must occur while Device B is on-screen.
+- **Clipboard Limits**: The system clipboard cannot be written to while the app is in the background (Android 10+). Prompt handling must occur while Device B is 
