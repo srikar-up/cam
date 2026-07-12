@@ -32,6 +32,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -167,9 +171,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 2-second splash loading delay
+        // [UI/UX FIX] Removed artificial 2-second delay. Let the UI render immediately.
         lifecycleScope.launch {
-            kotlinx.coroutines.delay(2000)
             isLoadingState.value = false
         }
 
@@ -897,7 +900,7 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        text = "Version: v1.2.0",
+                        text = "Version: v1.3.0",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF94A3B8),
@@ -1198,6 +1201,9 @@ class MainActivity : ComponentActivity() {
         var roomIdInput by remember { mutableStateOf(localRoomId.value) }
         val themeColors = getThemeColors()
         val context = LocalContext.current
+        
+        // [UI/UX FIX] Add state to track fullscreen toggle
+        var isFullScreen by remember { mutableStateOf(false) }
 
         // Run Local Wi-Fi discovery when entering ClientScreen in LAN connection mode
         DisposableEffect(Unit) {
@@ -1212,23 +1218,27 @@ class MainActivity : ComponentActivity() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(themeColors.first.first())
+                // [UI/UX FIX] Darken entire background when in fullscreen mode
+                .background(if (isFullScreen) Color.Black else themeColors.first.first())
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(24.dp)
-                    .size(48.dp)
-                    .shadow(2.dp, RoundedCornerShape(24.dp))
-                    .background(Color.White, RoundedCornerShape(24.dp))
-                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Go Back",
-                    tint = Color(0xFF1E293B)
-                )
+            // [UI/UX FIX] Hide the top back button to create an immersive edge-to-edge view
+            if (!isFullScreen) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(24.dp)
+                        .size(48.dp)
+                        .shadow(2.dp, RoundedCornerShape(24.dp))
+                        .background(Color.White, RoundedCornerShape(24.dp))
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Go Back",
+                        tint = Color(0xFF1E293B)
+                    )
+                }
             }
 
             Column(
@@ -1324,6 +1334,8 @@ class MainActivity : ComponentActivity() {
                                 value = ipInput,
                                 onValueChange = { ipInput = it },
                                 label = { Text("Host IP Address (e.g. 192.168.1.100)", color = Color(0xFF64748B)) },
+                                // [UI/UX FIX] Enable numeric keyboard for IP
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color(0xFF0F172A),
                                     unfocusedTextColor = Color(0xFF334155),
@@ -1337,6 +1349,8 @@ class MainActivity : ComponentActivity() {
                                 value = portInput,
                                 onValueChange = { portInput = it },
                                 label = { Text("Port (default 8890)", color = Color(0xFF64748B)) },
+                                // [UI/UX FIX] Enable numeric keyboard for Port
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color(0xFF0F172A),
                                     unfocusedTextColor = Color(0xFF334155),
@@ -1350,6 +1364,8 @@ class MainActivity : ComponentActivity() {
                                 value = roomIdInput,
                                 onValueChange = { roomIdInput = it },
                                 label = { Text("6-Digit Room ID", color = Color(0xFF64748B)) },
+                                // [UI/UX FIX] Enable numeric keyboard for Room ID
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color(0xFF0F172A),
                                     unfocusedTextColor = Color(0xFF334155),
@@ -1399,10 +1415,12 @@ class MainActivity : ComponentActivity() {
                 } else {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1.2f)
-                                .background(Color.Black)
+                            // [UI/UX FIX] Dynamically switch between the split-screen weight and full-screen size
+                            modifier = if (isFullScreen) {
+                                Modifier.fillMaxSize().background(Color.Black)
+                            } else {
+                                Modifier.fillMaxWidth().weight(1.2f).background(Color.Black)
+                            }
                         ) {
                             if (remoteVideoTrack.value != null) {
                                 AndroidView(
@@ -1421,87 +1439,129 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.align(Alignment.Center)
                                 )
                             }
-                        }
-
-                        // Bottom 50% - Receiver client controllers
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1.1f)
-                                .background(Color.White)
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.SpaceEvenly,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "STREAM RECEIVER CONTROLS",
-                                color = Color(0xFF0F172A),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.sp
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
+                            
+                            // [UI/UX FIX] Floating translucent toggle button overlaid on the video
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                                    .size(52.dp)
+                                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+                                    .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+                                    .clickable { isFullScreen = !isFullScreen },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Button(
-                                    onClick = { triggerSolverCapture("MCQ") },
-                                    enabled = !isProcessing.value,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(72.dp)
-                                        .padding(4.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
-                                ) {
-                                    Text("Solve MCQ", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
-                                }
-
-                                Button(
-                                    onClick = { triggerSolverCapture("CODE") },
-                                    enabled = !isProcessing.value,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(72.dp)
-                                        .padding(4.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
-                                ) {
-                                    Text("Solve Code", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color(0xFF0F172A))
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                Button(
-                                    onClick = { triggerSolverCapture("PREVIEW") },
-                                    enabled = !isProcessing.value,
-                                    modifier = Modifier
-                                        .weight(1.2f)
-                                        .height(64.dp)
-                                        .padding(4.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
-                                ) {
-                                    Text("Capture High-Res Photo", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                }
-
-                                Button(
-                                    onClick = { webRtcManager?.sendDataMessage("TOGGLE_FLASH") },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(64.dp)
-                                        .padding(4.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
-                                ) {
-                                    Text("Toggle Flash", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
-                                }
+                                Text(
+                                    text = if (isFullScreen) "EXIT" else "FULL",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.sp
+                                )
                             }
                         }
+
+                        // [UI/UX FIX] Completely remove the bottom controls from the view hierarchy when in fullscreen
+                        if (!isFullScreen) {
+                            // Bottom 50% - Receiver client controllers
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1.1f)
+                                    .background(Color.White)
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.SpaceEvenly,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "STREAM RECEIVER CONTROLS",
+                                    color = Color(0xFF0F172A),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.sp
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Button(
+                                        onClick = { triggerSolverCapture("MCQ") },
+                                        enabled = !isProcessing.value,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(72.dp)
+                                            .padding(4.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
+                                    ) {
+                                        // [UI/UX FIX] Added Icons and Column layout for buttons
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Default.Search, contentDescription = "MCQ", modifier = Modifier.size(24.dp), tint = Color.White)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text("Solve MCQ", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color.White)
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = { triggerSolverCapture("CODE") },
+                                        enabled = !isProcessing.value,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(72.dp)
+                                            .padding(4.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Default.Build, contentDescription = "Code", modifier = Modifier.size(24.dp), tint = Color(0xFF0F172A))
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text("Solve Code", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = Color(0xFF0F172A))
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Button(
+                                        onClick = { triggerSolverCapture("PREVIEW") },
+                                        enabled = !isProcessing.value,
+                                        modifier = Modifier
+                                            .weight(1.2f)
+                                            .height(64.dp)
+                                            .padding(4.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = themeColors.second)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Create, contentDescription = "Capture", modifier = Modifier.size(18.dp), tint = Color.White)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("High-Res Photo", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = { webRtcManager?.sendDataMessage("TOGGLE_FLASH") },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(64.dp)
+                                            .padding(4.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9))
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Warning, contentDescription = "Flash", modifier = Modifier.size(18.dp), tint = Color(0xFF334155))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Flash", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                     }
                 }
             }
