@@ -7,6 +7,7 @@ import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
@@ -17,6 +18,9 @@ class ConnectionManager {
     private val selector = ActorSelectorManager(Dispatchers.IO)
     private var serverSocket: ServerSocket? = null
     private var clientSocket: Socket? = null
+    
+    // Cached write channel to prevent Ktor socket crashes
+    private var writeChannel: ByteWriteChannel? = null
 
     // Starts server socket to listen for incoming connections
     suspend fun startServer(port: Int, onMessageReceived: suspend (Socket, String) -> Unit) = withContext(Dispatchers.IO) {
@@ -54,16 +58,20 @@ class ConnectionManager {
 
     // Sends message from client to server or vice versa
     suspend fun sendMessage(socket: Socket, message: String) = withContext(Dispatchers.IO) {
-        val writeChannel = socket.openWriteChannel(autoFlush = true)
-        writeChannel.writeStringUtf8(message + "\n")
+        if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
+            writeChannel = socket.openWriteChannel(autoFlush = true)
+        }
+        writeChannel?.writeStringUtf8(message + "\n")
     }
 
     // Sends binary image data
     suspend fun sendImage(socket: Socket, bytes: ByteArray) = withContext(Dispatchers.IO) {
-        val writeChannel = socket.openWriteChannel(autoFlush = true)
-        writeChannel.writeStringUtf8("IMAGE_START\n")
-        writeChannel.writeStringUtf8("${bytes.size}\n")
-        writeChannel.writeFully(bytes, 0, bytes.size)
+        if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
+            writeChannel = socket.openWriteChannel(autoFlush = true)
+        }
+        writeChannel?.writeStringUtf8("IMAGE_START\n")
+        writeChannel?.writeStringUtf8("${bytes.size}\n")
+        writeChannel?.writeFully(bytes, 0, bytes.size)
     }
 
     // Receives binary image data
@@ -78,10 +86,12 @@ class ConnectionManager {
 
     fun close() {
         try {
+            writeChannel?.close()
             serverSocket?.close()
             clientSocket?.close()
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        writeChannel = null
     }
 }

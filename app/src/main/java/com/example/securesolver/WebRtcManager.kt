@@ -79,7 +79,9 @@ class WebRtcManager(
         localVideoSource = peerConnectionFactory.createVideoSource(false)
         
         capturer.initialize(surfaceTextureHelper, context, localVideoSource!!.capturerObserver)
-        capturer.startCapture(1280, 720, 30)
+        
+        // [FIX] Match architecture.md specs to prevent network choking
+        capturer.startCapture(640, 480, 15)
 
         localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", localVideoSource)
         localVideoTrack?.setEnabled(true)
@@ -95,13 +97,21 @@ class WebRtcManager(
                 if (captured) return
                 captured = true
                 
-                try {
-                    val bitmap = videoFrameToBitmap(frame)
-                    onBitmapCaptured(bitmap)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    track.removeSink(this)
+                // [FIX] Retain frame memory and offload heavy byte-conversion to worker thread
+                frame.retain()
+                @Suppress("OptInUsage")
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    try {
+                        val bitmap = videoFrameToBitmap(frame)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            onBitmapCaptured(bitmap)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    } finally {
+                        frame.release()
+                        track.removeSink(this@VideoSink)
+                    }
                 }
             }
         }
@@ -175,10 +185,11 @@ class WebRtcManager(
     fun createPeerConnection(isCameraPhone: Boolean) {
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.services.mozilla.com").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.xten.com").createIceServer()
+            // [FIX] Added free TURN server to prevent symmetric NAT packet loss
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
+                .setUsername("openrelayproject")
+                .setPassword("openrelayproject")
+                .createIceServer()
         )
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -255,7 +266,16 @@ class WebRtcManager(
 
     fun addLocalVideoTrackToConnection() {
         localVideoTrack?.let { track ->
-            peerConnection?.addTrack(track, listOf("ARDAMS"))
+            val sender = peerConnection?.addTrack(track, listOf("ARDAMS"))
+            
+            // [FIX] Enforce strict max bitrate (500kbps)
+            val parameters = sender?.parameters
+            parameters?.encodings?.forEach { encoding ->
+                encoding.maxBitrateBps = 500_000 
+            }
+            if (parameters != null) {
+                sender.parameters = parameters
+            }
         }
     }
 

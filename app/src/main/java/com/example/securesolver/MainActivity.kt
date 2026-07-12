@@ -897,7 +897,7 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        text = "Version: v1.1.0",
+                        text = "Version: v1.2.0",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF94A3B8),
@@ -955,7 +955,19 @@ class MainActivity : ComponentActivity() {
 
                     lifecycleScope.launch(Dispatchers.IO) {
                         connectionManager.startServer(8890) { socket, line ->
-                            activeLanSocket = socket
+                            // [FIX] Do NOT generate offer until the socket actually connects 
+                            // to ensure ICE candidates aren't lost in the void.
+                            if (activeLanSocket == null) {
+                                activeLanSocket = socket
+                                lifecycleScope.launch(Dispatchers.Main) {
+                                    webRtcManager!!.createOffer { desc ->
+                                        lifecycleScope.launch(Dispatchers.IO) {
+                                            connectionManager.sendMessage(socket, "SDP_OFFER:${desc.description}")
+                                        }
+                                    }
+                                }
+                            }
+                            
                             if (line.startsWith("SDP_ANSWER:")) {
                                 val sdp = line.substringAfter("SDP_ANSWER:")
                                 lifecycleScope.launch(Dispatchers.Main) {
@@ -973,18 +985,6 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                        }
-                    }
-
-                    webRtcManager!!.createOffer { desc ->
-                        lifecycleScope.launch(Dispatchers.Main) {
-                            serverLogs = "Server running on $localIp:8890. Awaiting Client connection..."
-                        }
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            while (activeLanSocket == null) {
-                                kotlinx.coroutines.delay(200)
-                            }
-                            connectionManager.sendMessage(activeLanSocket!!, "SDP_OFFER:${desc.description}")
                         }
                     }
 
@@ -1655,11 +1655,8 @@ class MainActivity : ComponentActivity() {
                 val socket = connectionManager.connectToServer(ip, port)
                 activeLanSocket = socket
 
-                lifecycleScope.launch(Dispatchers.IO) {
-                    connectionManager.startServer(port + 1) { _, line ->
-                        handleLanSignalingMessage(line)
-                    }
-                }
+                // Immediately send CLIENT_CONNECT to kickstart the server's offer generation
+                connectionManager.sendMessage(socket, "CLIENT_CONNECT")
 
                 val receiveChannel = socket.openReadChannel()
                 while (true) {
