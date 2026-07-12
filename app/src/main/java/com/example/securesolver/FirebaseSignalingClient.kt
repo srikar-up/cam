@@ -7,6 +7,7 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.database.ChildEventListener
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -89,19 +90,20 @@ class FirebaseSignalingClient(
 
     fun observeIceCandidates(roomId: String): Flow<Map<String, Any>> = callbackFlow {
         val ref = getRoomRef(roomId).child("iceCandidates")
-        val listener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                for (child in snapshot.children) {
-                    val map = child.value as? Map<String, Any>
-                    if (map != null) {
-                        trySend(map)
-                    }
+        val listener = object : ChildEventListener {
+            override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
+                val map = snapshot.value as? Map<String, Any>
+                if (map != null) {
+                    trySend(map)
                 }
             }
+            override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {}
+            override fun onChildRemoved(snapshot: DataSnapshot) {}
+            override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
             override fun onCancelled(error: DatabaseError) {}
         }
-        ref.addValueEventListener(listener)
-        awaitClose { ref.removeEventListener(listener) }
+        ref.addChildEventListener(listener)
+        awaitClose { ref.removeChildEventListener(listener) }
     }
 
     fun clearRoom(roomId: String) {

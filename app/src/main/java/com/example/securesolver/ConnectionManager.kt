@@ -13,6 +13,10 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class ConnectionManager {
     private val selector = ActorSelectorManager(Dispatchers.IO)
@@ -21,17 +25,25 @@ class ConnectionManager {
     
     // Cached write channel to prevent Ktor socket crashes
     private var writeChannel: ByteWriteChannel? = null
+    
+    // [FIX] Introduce a synchronization mutex to ensure thread-safe socket piping
+    private val writeMutex = Mutex()
 
     // Starts server socket to listen for incoming connections
     suspend fun startServer(port: Int, onMessageReceived: suspend (Socket, String) -> Unit) = withContext(Dispatchers.IO) {
-        try {
-            serverSocket = aSocket(selector).tcp().bind("0.0.0.0", port)
-            while (true) {
-                val socket = serverSocket?.accept() ?: break
-                handleClientConnection(socket, onMessageReceived)
+        coroutineScope {
+            try {
+                serverSocket = aSocket(selector).tcp().bind("0.0.0.0", port)
+                while (true) {
+                    val socket = serverSocket?.accept() ?: break
+                    // [FIX] Launch in an isolated coroutine block so the server loop is never blocked
+                    launch {
+                        handleClientConnection(socket, onMessageReceived)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
 
@@ -58,20 +70,24 @@ class ConnectionManager {
 
     // Sends message from client to server or vice versa
     suspend fun sendMessage(socket: Socket, message: String) = withContext(Dispatchers.IO) {
-        if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
-            writeChannel = socket.openWriteChannel(autoFlush = true)
+        writeMutex.withLock {
+            if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
+                writeChannel = socket.openWriteChannel(autoFlush = true)
+            }
+            writeChannel?.writeStringUtf8(message + "\n")
         }
-        writeChannel?.writeStringUtf8(message + "\n")
     }
 
     // Sends binary image data
     suspend fun sendImage(socket: Socket, bytes: ByteArray) = withContext(Dispatchers.IO) {
-        if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
-            writeChannel = socket.openWriteChannel(autoFlush = true)
+        writeMutex.withLock {
+            if (writeChannel == null || writeChannel?.isClosedForWrite == true) {
+                writeChannel = socket.openWriteChannel(autoFlush = true)
+            }
+            writeChannel?.writeStringUtf8("IMAGE_START\n")
+            writeChannel?.writeStringUtf8("${bytes.size}\n")
+            writeChannel?.writeFully(bytes, 0, bytes.size)
         }
-        writeChannel?.writeStringUtf8("IMAGE_START\n")
-        writeChannel?.writeStringUtf8("${bytes.size}\n")
-        writeChannel?.writeFully(bytes, 0, bytes.size)
     }
 
     // Receives binary image data

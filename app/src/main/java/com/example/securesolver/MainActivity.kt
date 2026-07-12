@@ -307,6 +307,9 @@ class MainActivity : ComponentActivity() {
         unregisterNsdService()
         stopNsdDiscovery()
         discoveredHostsList.clear()
+        
+        // [FIX] Explicitly reset UI processing state blocks to unfreeze greyed out buttons
+        isProcessing.value = false
 
         if (isBound) {
             try {
@@ -900,7 +903,7 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        text = "Version: v1.3.0",
+                        text = "Version: v1.4.0",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF94A3B8),
@@ -1795,9 +1798,11 @@ class MainActivity : ComponentActivity() {
             message == "END_IMG" -> {
                 val bytes = receivedImageBytes.toByteArray()
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (bitmap != null) {
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        isProcessing.value = false
+                
+                // [FIX] Always clear processing state even if image parsing fails completely
+                lifecycleScope.launch(Dispatchers.Main) {
+                    isProcessing.value = false
+                    if (bitmap != null) {
                         if (activeSolverPromptType.value == "PREVIEW") {
                             capturedPhotoState.value = bitmap
                         } else if (activeSolverPromptType.value == "MCQ") {
@@ -1805,6 +1810,8 @@ class MainActivity : ComponentActivity() {
                         } else {
                             lensIntegrationEngine.solveCode(bitmap)
                         }
+                    } else {
+                        Toast.makeText(this@MainActivity, "Image Transfer Error: Corrupted Data", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
