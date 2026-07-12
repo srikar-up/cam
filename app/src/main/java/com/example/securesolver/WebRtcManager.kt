@@ -10,6 +10,7 @@ import android.view.Surface
 import org.webrtc.*
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import kotlinx.coroutines.*
 
 class WebRtcManager(
     private val context: Context,
@@ -99,18 +100,19 @@ class WebRtcManager(
                 
                 // [FIX] Retain frame memory and offload heavy byte-conversion to worker thread
                 frame.retain()
+                val self = this
                 @Suppress("OptInUsage")
-                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                GlobalScope.launch(Dispatchers.Default) {
                     try {
                         val bitmap = videoFrameToBitmap(frame)
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        withContext(Dispatchers.Main) {
                             onBitmapCaptured(bitmap)
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     } finally {
                         frame.release()
-                        track.removeSink(this@VideoSink)
+                        track.removeSink(self)
                     }
                 }
             }
