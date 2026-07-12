@@ -103,7 +103,7 @@ class FirebaseSignalingClient(
             override fun onCancelled(error: DatabaseError) {}
         }
         ref.addChildEventListener(listener)
-        awaitClose { ref.removeChildEventListener(listener) }
+        awaitClose { ref.removeEventListener(listener) }
     }
 
     fun clearRoom(roomId: String) {
